@@ -1,0 +1,33 @@
+# 仮想環境
+.venv/
+env/
+__pycache__/
+
+# Jupyterノートブックキャッシュ
+*.ipynb_checkpoints/
+
+# 出力物・成果物
+output/
+models/
+*.csv
+*.zip
+*.tar
+*.h5
+*.ckpt
+*.pkl
+*.npz
+*.npy
+*.log
+
+# Kaggle評価関連
+data/kaggle_evaluation/
+data/*.csv
+data/*.zip
+
+# 個人情報・鍵
+*.json
+*.pem
+*.key
+*.env
+.kaggle/
+
