@@ -2,61 +2,81 @@
 # -*- coding: utf-8 -*-
 """
 CMIコンペ ベースラインモデル
-LightGBMを使用したマルチクラス分類
+Kaggle提出用
 """
 
 import pandas as pd
 import numpy as np
 import lightgbm as lgb
-from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import f1_score, classification_report
+from sklearn.preprocessing import LabelEncoder
 import warnings
 warnings.filterwarnings('ignore')
 
-def load_data():
-    """前処理済みデータの読み込み"""
-    print("データ読み込み中...")
-    train_features = pd.read_csv('../output/train_features.csv')
-    test_features = pd.read_csv('../output/test_features.csv')
-    
-    print(f"Train shape: {train_features.shape}")
-    print(f"Test shape: {test_features.shape}")
-    
-    return train_features, test_features
+# グローバル変数
+global_models = None
+global_le = None
+global_feature_cols = None
 
-def prepare_data(train_features, test_features):
-    """モデル用データの準備"""
+def extract_features(df):
+    """
+    シーケンス単位の特徴量抽出
+    ノートブックの特徴量抽出ロジックを移植
+    """
+    # センサーデータのカラムを特定
+    sensor_cols = [col for col in df.columns if any(sensor in col for sensor in ['acc_', 'rot_', 'tof_', 'thm_'])]
+    
+    # シーケンス単位で統計量を計算
+    features = {}
+    
+    for col in sensor_cols:
+        if df[col].dtype in ['float64', 'int64']:
+            # 基本統計量
+            features[f'{col}_mean'] = df[col].mean()
+            features[f'{col}_std'] = df[col].std()
+            features[f'{col}_min'] = df[col].min()
+            features[f'{col}_max'] = df[col].max()
+            features[f'{col}_median'] = df[col].median()
+            
+            # 分位数
+            features[f'{col}_q25'] = df[col].quantile(0.25)
+            features[f'{col}_q75'] = df[col].quantile(0.75)
+            
+            # その他の統計量
+            features[f'{col}_range'] = df[col].max() - df[col].min()
+            features[f'{col}_var'] = df[col].var()
+            
+            # 欠損値の割合
+            features[f'{col}_missing_ratio'] = df[col].isnull().sum() / len(df)
+    
+    # シーケンス情報
+    if 'sequence_id' in df.columns:
+        features['sequence_id'] = df['sequence_id'].iloc[0]
+    
+    return pd.DataFrame([features])
+
+def train_model():
+    """モデルの学習"""
+    global global_models, global_le, global_feature_cols
+    
+    print("モデル学習開始...")
+    
+    # 前処理済みデータの読み込み
+    train_features = pd.read_csv('../../output/train_features.csv')
+    
     # 特徴量とラベルの分離
     feature_cols = [col for col in train_features.columns if col not in ['sequence_id', 'gesture']]
     
     X_train = train_features[feature_cols]
     y_train = train_features['gesture']
-    X_test = test_features[feature_cols]
     
     # ラベルエンコーディング
-    from sklearn.preprocessing import LabelEncoder
     le = LabelEncoder()
     y_train_encoded = le.fit_transform(y_train)
-    
-    print(f"Features: {len(feature_cols)}")
-    print(f"Classes: {len(le.classes_)}")
-    print(f"Class distribution: {np.bincount(y_train_encoded)}")
-    
-    return X_train, y_train_encoded, X_test, le
-
-def train_model(X_train, y_train, n_folds=5):
-    """LightGBMモデルの訓練"""
-    print(f"\n{'-'*50}")
-    print("LightGBMモデル訓練開始")
-    print(f"{'-'*50}")
-    
-    # クロスバリデーション設定
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
     
     # モデルパラメータ
     params = {
         'objective': 'multiclass',
-        'num_class': len(np.unique(y_train)),
+        'num_class': len(np.unique(y_train_encoded)),
         'metric': 'multi_logloss',
         'boosting_type': 'gbdt',
         'num_leaves': 31,
@@ -68,118 +88,54 @@ def train_model(X_train, y_train, n_folds=5):
         'random_state': 42
     }
     
-    # クロスバリデーション
-    fold_scores = []
-    models = []
+    # 単一モデルで学習（時間短縮のため）
+    train_data = lgb.Dataset(X_train, label=y_train_encoded)
     
-    for fold, (train_idx, valid_idx) in enumerate(skf.split(X_train, y_train), 1):
-        print(f"\nFold {fold}/{n_folds}")
-        
-        X_fold_train, X_fold_valid = X_train.iloc[train_idx], X_train.iloc[valid_idx]
-        y_fold_train, y_fold_valid = y_train[train_idx], y_train[valid_idx]
-        
-        # データセット作成
-        train_data = lgb.Dataset(X_fold_train, label=y_fold_train)
-        valid_data = lgb.Dataset(X_fold_valid, label=y_fold_valid, reference=train_data)
-        
-        # モデル訓練
-        model = lgb.train(
-            params,
-            train_data,
-            valid_sets=[valid_data],
-            num_boost_round=1000,
-            callbacks=[lgb.early_stopping(50), lgb.log_evaluation(100)]
-        )
-        
-        # 予測と評価
-        valid_preds = model.predict(X_fold_valid)
-        valid_preds_labels = valid_preds.argmax(axis=1)
-        
-        fold_score = f1_score(y_fold_valid, valid_preds_labels, average='macro')
-        fold_scores.append(fold_score)
-        
-        print(f"Fold {fold} F1 Score: {fold_score:.4f}")
-        
-        models.append(model)
+    model = lgb.train(
+        params,
+        train_data,
+        num_boost_round=1000,
+        callbacks=[lgb.early_stopping(50)]
+    )
     
-    # 全体のスコア
-    mean_score = np.mean(fold_scores)
-    std_score = np.std(fold_scores)
+    global_models = [model]  # リスト形式で保持
+    global_le = le
+    global_feature_cols = feature_cols
     
-    print(f"\n{'='*50}")
-    print(f"Cross-validation Results:")
-    print(f"Mean F1 Score: {mean_score:.4f} (+/- {std_score:.4f})")
-    print(f"Individual scores: {[f'{score:.4f}' for score in fold_scores]}")
-    print(f"{'='*50}")
-    
-    return models, mean_score, std_score
+    print("モデル学習完了")
 
-def predict_test(models, X_test, le):
-    """テストデータでの予測"""
-    print("\nテストデータでの予測中...")
+def predict_gesture(sequence_data):
+    """シーケンスデータからジェスチャーを予測"""
+    global global_models, global_le, global_feature_cols
     
-    # 全モデルの予測を平均
-    test_preds = np.zeros((X_test.shape[0], len(le.classes_)))
+    if global_models is None:
+        train_model()
     
-    for model in models:
-        pred = model.predict(X_test)
-        test_preds += pred
+    # 特徴量抽出
+    features = extract_features(sequence_data)
     
-    test_preds /= len(models)
+    # 予測に必要な特徴量のみ選択
+    if 'sequence_id' in features.columns:
+        features = features.drop('sequence_id', axis=1)
+    
+    # 特徴量の順序を統一
+    features = features[global_feature_cols]
+    
+    # 予測実行
+    predictions = np.zeros((1, len(global_le.classes_)))
+    
+    for model in global_models:
+        pred = model.predict(features)
+        predictions += pred
+    
+    predictions /= len(global_models)
     
     # ラベルに変換
-    test_preds_labels = test_preds.argmax(axis=1)
-    test_preds_gestures = le.inverse_transform(test_preds_labels)
+    pred_label = predictions.argmax(axis=1)[0]
+    pred_gesture = global_le.inverse_transform([pred_label])[0]
     
-    return test_preds_gestures
+    return pred_gesture
 
-def create_submission(test_features, predictions):
-    """提出ファイルの作成"""
-    print("\n提出ファイル作成中...")
-    
-    submission = pd.DataFrame({
-        'sequence_id': test_features['sequence_id'],
-        'gesture': predictions
-    })
-    
-    submission_path = '../output/submission.csv'
-    submission.to_csv(submission_path, index=False)
-    
-    print(f"提出ファイル保存: {submission_path}")
-    print(f"Submission shape: {submission.shape}")
-    
-    # 予測分布の確認
-    print("\n予測分布:")
-    print(submission['gesture'].value_counts())
-    
-    return submission
-
-def main():
-    """メイン関数"""
-    print("CMIコンペ ベースラインモデル実行開始")
-    print("="*50)
-    
-    # データ読み込み
-    train_features, test_features = load_data()
-    
-    # データ準備
-    X_train, y_train, X_test, le = prepare_data(train_features, test_features)
-    
-    # モデル訓練
-    models, mean_score, std_score = train_model(X_train, y_train)
-    
-    # テスト予測
-    predictions = predict_test(models, X_test, le)
-    
-    # 提出ファイル作成
-    submission = create_submission(test_features, predictions)
-    
-    print("\n" + "="*50)
-    print("ベースラインモデル実行完了")
-    print(f"CV Score: {mean_score:.4f} (+/- {std_score:.4f})")
-    print("="*50)
-    
-    return submission, mean_score
-
+# 初期化時にモデルを学習
 if __name__ == "__main__":
-    submission, score = main() 
+    train_model() 
