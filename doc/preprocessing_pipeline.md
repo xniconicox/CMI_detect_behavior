@@ -31,3 +31,9 @@
     - 事前学習済み AE モデルを渡して `compute_autoencoder_reconstruction_error` で再構成誤差を取得します。
 
 これらの関数を学習・推論時に共通利用することで、前処理の再現性を高めています。
+
+## ハイパーパラメータ管理と可視化
+
+前処理に関するパラメータは `config.yaml` の `preprocessing` セクションでまとめて管理しています。ウィンドウサイズや FFT バンドなどを変更すると各スクリプトに自動反映されます。
+
+実装した処理の挙動は `notebooks/preprocessing_visualization.ipynb` で確認できます。サンプルデータを用いて線形加速度計算や FFT バンドエネルギーの取得を行い、Matplotlib によるグラフ表示例を掲載しています。
