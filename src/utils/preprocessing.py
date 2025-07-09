@@ -289,3 +289,57 @@ def compute_autoencoder_reconstruction_error(
     reconstructed = model.predict(X_windows, verbose=0)
     mse = ((X_windows - reconstructed) ** 2).mean(axis=(1, 2))
     return mse.reshape(-1, 1)
+
+
+def tof_to_voxel_tensor(
+    df: pd.DataFrame,
+    fill_value: float = 0.0,
+    prefix: str = "tof_",
+) -> np.ndarray:
+    """Convert ToF sensor columns to a 3D voxel tensor.
+
+    The dataframe is expected to contain columns in the form
+    ``tof_{sensor}_v{index}`` where ``index`` ranges from 0 to
+    ``height * width - 1``. Sensor numbers are used as the depth
+    dimension of the resulting tensor.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe with ToF columns.
+    fill_value : float, optional
+        Value used to replace NaN or -1 readings. Defaults to 0.0.
+    prefix : str, optional
+        Prefix for ToF column names. Defaults to "tof_".
+
+    Returns
+    -------
+    np.ndarray
+        Tensor with shape ``(len(df), depth, height, width)``.
+    """
+    import re
+
+    pattern = re.compile(fr"^{prefix}(\d+)_v(\d+)$")
+    matches = [(col, pattern.match(col)) for col in df.columns]
+    sensor_nums = sorted({int(m.group(1)) for col, m in matches if m})
+    if not sensor_nums:
+        raise ValueError("No ToF columns found in dataframe")
+
+    # Determine grid size from the largest voxel index
+    voxel_indices = [int(m.group(2)) for col, m in matches if m]
+    max_index = max(voxel_indices)
+    width = height = int(np.sqrt(max_index + 1))
+    depth = len(sensor_nums)
+
+    n_timesteps = len(df)
+    tensor = np.full((n_timesteps, depth, height, width), fill_value, dtype=np.float32)
+
+    for d, sensor_num in enumerate(sensor_nums):
+        for idx in range(height * width):
+            col = f"{prefix}{sensor_num}_v{idx}"
+            if col in df.columns:
+                values = df[col].replace(-1, fill_value).to_numpy(dtype=np.float32)
+                r, c = divmod(idx, width)
+                tensor[:, d, r, c] = values
+
+    return tensor

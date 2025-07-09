@@ -29,6 +29,8 @@
     - `compute_persistence_image_features` で位相的特徴を画像化します（`giotto-tda` 使用）。
 11. **Auto‑Encoder 誤差**
     - 事前学習済み AE モデルを渡して `compute_autoencoder_reconstruction_error` で再構成誤差を取得します。
+12. **ToF 3D Voxel 化**
+    - `tof_to_voxel_tensor` で ToF センサ 5 層 × 8×8 グリッドを時系列テンソルに整形します。
 
 これらの関数を学習・推論時に共通利用することで、前処理の再現性を高めています。
 

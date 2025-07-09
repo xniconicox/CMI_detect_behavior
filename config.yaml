@@ -16,3 +16,6 @@ preprocessing:
   tda_dimension: 1
   tda_bins: 20
   tda_sigma: 0.1
+  tof_depth: 5
+  tof_height: 8
+  tof_width: 8
