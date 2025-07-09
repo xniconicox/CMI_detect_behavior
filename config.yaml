@@ -1,0 +1,21 @@
+data_dir: "data"
+output_dir: "output/experiments"
+
+# preprocessing hyperparameters
+preprocessing:
+  window_size: 128
+  stride: 64
+  sampling_rate: 50.0
+  fft_bands:
+    - [0.5, 2]
+    - [2, 5]
+    - [5, 10]
+    - [10, 20]
+  wavelet: "db4"
+  wavelet_level: 3
+  tda_dimension: 1
+  tda_bins: 20
+  tda_sigma: 0.1
+  tof_depth: 5
+  tof_height: 8
+  tof_width: 8
