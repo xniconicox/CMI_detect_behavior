@@ -6,6 +6,7 @@ import pickle
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from src.utils.config_utils import load_config
 
 def load_w64_s16_data():
     """
@@ -14,12 +15,8 @@ def load_w64_s16_data():
     Returns:
         tuple: (sensor_data, demographics_data, labels)
     """
-    # 絶対パスに修正
-    project_root = Path(__file__).parent.parent.parent
-    data_dir = project_root / "output/experiments/lstm_v2_w64_s16/preprocessed"
-
-    # 正しいパスに修正
-    data_dir = Path("/mnt/c/Users/ShunK/works/CMI_comp/output/experiments/lstm_v2_w64_s16/preprocessed")
+    config = load_config()
+    data_dir = Path(config["output_dir"]) / "lstm_v2_w64_s16" / "preprocessed"
     
     print(f"📁 データ読み込み中...")
     
@@ -74,7 +71,8 @@ def load_w128_s32_data():
     Returns:
         tuple: (X_sensor, X_demographics, y, meta_info)
     """
-    preprocessed_path = Path("../output/experiments/lstm_v2_w128_s32/preprocessed/")
+    config = load_config()
+    preprocessed_path = Path(config["output_dir"]) / "lstm_v2_w128_s32" / "preprocessed"
     
     print(f"📁 前処理済みデータパス: {preprocessed_path}")
     
