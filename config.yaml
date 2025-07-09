@@ -3,8 +3,8 @@ output_dir: "output/experiments"
 
 # preprocessing hyperparameters
 preprocessing:
-  window_size: 256
-  stride: 128
+  window_size: 128
+  stride: 64
   sampling_rate: 50.0
   fft_bands:
     - [0.5, 2]

@@ -37,5 +37,5 @@
 ## ハイパーパラメータ管理と可視化
 
 前処理に関するパラメータは `config.yaml` の `preprocessing` セクションでまとめて管理しています。ウィンドウサイズや FFT バンドなどを変更すると各スクリプトに自動反映されます。
-
+デフォルトでは `window_size=128`、`stride=64` を使用しています。
 実装した処理の挙動は `notebooks/preprocessing_visualization.ipynb` で確認できます。サンプルデータを用いて線形加速度計算や FFT バンドエネルギーの取得を行い、Matplotlib によるグラフ表示例を掲載しています。
