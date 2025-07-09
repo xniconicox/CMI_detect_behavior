@@ -19,6 +19,7 @@ from sklearn.metrics import f1_score, classification_report
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
+from src.utils.config_utils import load_config
 warnings.filterwarnings('ignore')
 
 # TensorFlow GPU設定
@@ -50,12 +51,14 @@ class LSTMv2Trainer:
         """
         self.experiment_name = experiment_name
         self.window_config = window_config
-        self.output_dir = Path(f"../output/experiments/{experiment_name}_{window_config}")
+        config = load_config()
+        base_output = Path(config["output_dir"])
+        self.output_dir = base_output / f"{experiment_name}_{window_config}"
         self.models_dir = self.output_dir / "models"
         self.results_dir = self.output_dir / "results"
-        
+
         # 前処理済みデータのパス
-        self.preprocessed_dir = Path(f"/mnt/c/Users/ShunK/works/CMI_comp/output/experiments/lstm_v2_{window_config}/preprocessed")
+        self.preprocessed_dir = base_output / f"lstm_v2_{window_config}" / "preprocessed"
         
         # ディレクトリ作成
         self.output_dir.mkdir(parents=True, exist_ok=True)
