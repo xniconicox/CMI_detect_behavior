@@ -1,41 +1,58 @@
 # 前処理パイプライン概要
 
-このプロジェクトではセンサーデータと Demographics 情報を統合する前処理モジュール `src/utils/preprocessing.py` を作成しました。
+`src/utils/preprocessing.py` では、**センサ時系列 + Demographics** を  
+A–M ブロックに分けて特徴量化するユーティリティをまとめています  
+（デザインドキュメント 4-2 と 1 : 1 対応）。
 
-## 主な処理内容
+| Block | 関数 | 次元 | 主な用途 / 備考 |
+|-------|------|------|-----------------|
+| **A 基本統計** | `compute_basic_statistics` | 56 | 広域量的特徴 (mean / std / range / RMS / energy) |
+| **B ピーク&周期** | `compute_peak_features` | 18 | BFRB 反復性をカウント |
+| **C FFT エネルギー** | `compute_fft_band_energy` | 10 | 0.5–20 Hz のリズム・速度指標 |
+| **D ワールド線形加速度** | `quaternion_to_rotation_matrix`<br>`linear_acceleration` | 21 | 姿勢差を除去した純粋な動き |
+| **E 欠損フラグ** | `add_missing_sensor_flags` | 3 | ToF / Thermal / IMU 欠測を one-hot |
+| **F Demographics** | （窓生成時に結合） | 4 | sex / handedness / height / arm_len |
+| **G TDA Stats** | `compute_persistence_image_features` | 8 | 位相的周期性 (Persistence Image) |
+| **H AE 再構成誤差** | `compute_autoencoder_reconstruction_error` | 4 | 異常度スコア |
+| **I 合成 Tabular** | A–H を結合 | 120 | LightGBM / CatBoost 用 |
+| **J IMU Window Tensor** | `create_sliding_windows_with_demographics` | 1 792 | GRU / CNN-GRU 入力 |
+| **K ToF 3D-Voxel** | `tof_to_voxel_tensor` | 20 480 | ToF-3D-CNN 入力 |
+| **L Handedness Normalization** | `handedness_normalization` | — | 左利きサンプルの Y/Z 反転 |
+| **M Wavelet Features** | `compute_wavelet_features` | 可変 (level×axis) | DWT バンドエネルギー |
 
-1. **IMU ワールド座標変換**
-   - クォータニオンを回転行列に変換し、加速度ベクトルをワールド座標へ変換します。
-   - 重力成分を除外して線形加速度を算出する関数 `linear_acceleration` を実装しました。
-2. **スライディングウィンドウ生成**
-   - `create_sliding_windows_with_demographics` で時系列データを固定長ウィンドウに変換します。
-   - 各ウィンドウには静的な Demographics 特徴量を付与します。
-3. **正規化処理**
-   - センサーデータおよび Demographics データを `StandardScaler` で正規化するユーティリティを提供します。
-4. **ピーク数特徴量**
-   - 各ウィンドウから軸ごとのピーク数を抽出する簡易な特徴量計算を追加しました。
-5. **欠損センサ検知フラグ**
-   - センサ列がすべて欠損している場合に `missing_flag_*` を付与します。
-6. **基本統計量抽出**
-   - 各ウィンドウで mean, std, range, RMS, energy と合成加速度の
-     mean/std を計算する `compute_basic_statistics` を追加しました。
-7. **FFT バンドエネルギー**
-   - `compute_fft_band_energy` で 0.5〜20Hz のバンド別エネルギーを算出します。
-8. **利き手反転正規化**
-   - `handedness_normalization` により左利きデータの Y/Z 軸を反転させます。
-9. **Wavelet 周波数特徴**
-   - `compute_wavelet_features` により離散 Wavelet 変換の各バンドエネルギーを抽出します。
-10. **TDA 特徴量**
-    - `compute_persistence_image_features` で位相的特徴を画像化します（`giotto-tda` 使用）。
-11. **Auto‑Encoder 誤差**
-    - 事前学習済み AE モデルを渡して `compute_autoencoder_reconstruction_error` で再構成誤差を取得します。
-12. **ToF 3D Voxel 化**
-    - `tof_to_voxel_tensor` で ToF センサ 5 層 × 8×8 グリッドを時系列テンソルに整形します。
+> **Utility**  
+> - `normalize_sensor_data`, `normalize_tabular_data` : z-score 正規化
 
-これらの関数を学習・推論時に共通利用することで、前処理の再現性を高めています。
+---
 
-## ハイパーパラメータ管理と可視化
+## 主な処理の流れ
 
-前処理に関するパラメータは `config.yaml` の `preprocessing` セクションでまとめて管理しています。ウィンドウサイズや FFT バンドなどを変更すると各スクリプトに自動反映されます。
-デフォルトでは `window_size=128`、`stride=64` を使用しています。
-実装した処理の挙動は `notebooks/preprocessing_visualization.ipynb` で確認できます。サンプルデータを用いて線形加速度計算や FFT バンドエネルギーの取得を行い、Matplotlib によるグラフ表示例を掲載しています。
+1. **D: IMU ワールド座標変換**  
+2. **J: スライディングウィンドウ生成 (+F Demographics)**  
+3. **Utility: 正規化**  
+4. **L: 利き手反転**（左利きのみ Y/Z 反転）  
+5. **A–C, G, H, M の特徴抽出**  
+6. **E 欠損フラグ付与**  
+7. **I: Tabular 120 dim へ統合**  
+8. **K: ToF 3D-Voxel 変換**
+
+---
+
+## ファイル出力規約
+
+| 保存対象 | ファイル例 | 形式 |
+|----------|-----------|------|
+| Tabular 120 dim | `features_tab120.parquet` | Parquet |
+| IMU Tensor | `imu_windows.npy` | NumPy |
+| ToF Tensor | `tof_voxel.npy` | NumPy |
+
+---
+
+## ハイパーパラメータ & 可視化
+
+- すべて `config.yaml > preprocessing` で集中管理  
+  (`window_size=256`, `stride=128`, `fft_bands`, `wavelet` など)
+- Notebook: `notebooks/preprocessing_visualization.ipynb`  
+  で各ブロックの挙動を確認できます。
+
+

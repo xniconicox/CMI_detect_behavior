@@ -281,3 +281,55 @@ def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level:
             ax_feats += [np.sum(c ** 2) for c in coeffs]
         feats.append(ax_feats)
     return np.array(feats, dtype=np.float32)
+
+
+# ============================================================
+# Utility : Missing-value Cleaning
+# =============================
+
+def clean_missing_sensor_data(
+    df: pd.DataFrame,
+    sensor_cols: list,
+    group_cols: tuple | list = ("subject", "sequence_id"),
+    time_col: str = "timestamp",
+    short_gap: int = 5,
+) -> pd.DataFrame:
+    """Fill missing sensor values using interpolation and ffill/bfill.
+
+    Short gaps of up to ``short_gap`` consecutive NaNs are linearly interpolated
+    for each sequence.  Longer gaps are filled with forward/backward fill.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw dataframe containing sensor readings.
+    sensor_cols : list
+        Columns corresponding to sensor values.
+    group_cols : tuple | list, optional
+        Columns that define a sequence (default is ("subject", "sequence_id")).
+    time_col : str, optional
+        Timestamp column used to sort values before interpolation.
+    short_gap : int, optional
+        Maximum length of gap to interpolate linearly.
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe with missing values filled.
+    """
+
+    df = df.sort_values(list(group_cols) + [time_col]).copy()
+    df[sensor_cols] = df[sensor_cols].replace(-1, np.nan)
+
+    grouped = df.groupby(list(group_cols))
+    for _, idx in grouped.groups.items():
+        segment = df.loc[idx, sensor_cols]
+        segment = segment.interpolate(
+            method="linear",
+            limit=short_gap,
+            limit_direction="both",
+        )
+        segment = segment.ffill().bfill()
+        df.loc[idx, sensor_cols] = segment
+
+    return df
