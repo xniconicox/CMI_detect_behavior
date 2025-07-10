@@ -261,11 +261,50 @@ def tof_to_voxel_tensor(df: pd.DataFrame, fill_value: float = 0.0, prefix: str =
 # L. 利き手反転正規化 (Y/Z flip for left‑handed)
 # ============================================================
 
-def handedness_normalization(df: pd.DataFrame, axis_cols: list, handedness_col: str = "handedness") -> pd.DataFrame:
-    """Flip Y/Z axes for left‑handed subjects (Block H)."""
-    y_col, z_col = axis_cols[1], axis_cols[2]
-    df.loc[df[handedness_col] == 0, [y_col, z_col]] *= -1
+def handedness_correction(df):
+    df = df.copy()
+    left = df['handedness']==0
+    # 加速度・ジャイロの Y/Z 軸反転
+    for col in ['acc_y','acc_z','rot_y','rot_z']:
+        df.loc[left, col] *= -1
+    # ToF センサー X 軸反転 (例)
+    for col in df.columns:
+        if col.startswith('tof_') and col.endswith('_x'):
+            df.loc[left, col] *= -1
     return df
+# セル1：利き手補正 v2 定義
+def handedness_correction_v2(df):
+    """
+    左利き(subject: handedness==0) に対し、
+    ・加速度(acc_*), ジャイロ(gyro_*), 回転(rot_*) の Y/Z 軸を反転
+    ・磁力計(mag_*) があれば同様に反転
+    ・ToF 全チャンネルを反転（必要に応じて調整）
+    """
+    df = df.copy()
+    left = df['handedness'] == 0
+
+    # IMU 系センサー
+    sensors = {
+        'acc': ['x','y','z'],
+        'gyro': ['x','y','z'],
+        'rot':  ['w','x','y','z'],
+        'mag':  ['x','y','z'],
+    }
+    for sensor, axes in sensors.items():
+        for axis in axes:
+            col = f"{sensor}_{axis}"
+            if col in df.columns:
+                # X/W 軸はそのまま、Y/Z 軸は符号反転
+                factor = -1 if axis in ['y','z'] else 1
+                df.loc[left, col] *= factor
+
+    # ToF センサー全チャンネル反転
+    for col in df.columns:
+        if col.startswith('tof_'):
+            df.loc[left, col] *= -1
+
+    return df
+
 # ============================================================
 # M. Wavelet 周波数特徴 (DWT energies)
 # ============================================================
@@ -333,3 +372,170 @@ def clean_missing_sensor_data(
         df.loc[idx, sensor_cols] = segment
 
     return df
+
+# セル：前処理関数をセンサー種別ごとに最適化
+import tempfile, shutil, uuid, os
+from pathlib import Path
+from joblib import Parallel, delayed
+from tqdm.auto import tqdm
+import pandas as pd, numpy as np
+import gc
+# Optional: quaternion補間にSLERPを使う場合
+# from scipy.spatial.transform import Rotation, Slerp
+
+def _interpolate_and_dump(
+    seq_df: pd.DataFrame,
+    sensor_type_groups: dict,
+    interp_params: dict,
+    time_col: str,
+    tmp_dir: str,
+) -> str:
+    seg = seq_df.sort_values(time_col).copy()
+
+    # --- ToF: -1→NaN  (Accelerometer の -1/0 は別関数で対処済とする) ---
+    tof_cols = sensor_type_groups.get("ToF_Sensor", [])
+    if tof_cols:
+        seg[tof_cols] = seg[tof_cols].replace(-1, np.nan)
+
+    # --- 各センサー種別ごとに補間処理 ----------
+    for sensor_type, cols in sensor_type_groups.items():
+        params = interp_params[sensor_type]
+        if sensor_type == "Accelerometer":
+            # 線形補間のみ、limitフレームまで
+            seg[cols] = seg[cols].interpolate(
+                limit=params["limit"],
+                limit_direction="both",
+                method="linear"
+            )
+            # 端点は埋めず NaN のまま
+        elif sensor_type == "Rotation":
+            # 現状は線形補間で代用（要SLERPアップデート）
+            seg[cols] = seg[cols].interpolate(
+                limit=params["limit"],
+                limit_direction="both",
+                method="linear"
+            )
+        elif sensor_type == "ToF_Sensor":
+            if params.get("method") == "linear":
+                seg[cols] = seg[cols].interpolate(
+                    limit=params["limit"],
+                    limit_direction="both",
+                    method="linear"
+                )
+            # 長い欠損は 0 埋め
+            seg[cols] = seg[cols].fillna(params["fill_value"])
+        elif sensor_type == "Thermal":
+            seg[cols] = (
+                seg[cols]
+                .interpolate(limit=params["limit"], limit_direction="both", method="linear")
+                .ffill()
+                .bfill()
+            )
+
+    # --- ファイル出力 ---
+    fname = f"seq_{seq_df['sequence_id'].iloc[0]}_{uuid.uuid4().hex}.parquet"
+    out_path = Path(tmp_dir) / fname
+    seg.to_parquet(out_path, compression="zstd")
+
+    # メモリ開放
+    del seg; gc.collect()
+    return str(out_path)
+
+
+def clean_missing_sensor_data_parallel_disk(
+    df: pd.DataFrame,
+    sensor_type_groups: dict,
+    group_cols=("subject", "sequence_id"),
+    time_col: str = "sequence_counter",
+    interp_params: dict | None = None,
+    n_jobs: int = -1,
+    tmp_parent: str | Path = "tmp_clean_chunks",
+    keep_tmp: bool = False,
+) -> pd.DataFrame:
+    """
+    センサー種別ごとの補間ルールを適用して並列処理＋ディスク結合。
+    sensor_type_groups: {
+      "Accelerometer": [...],
+      "Rotation": [...],
+      "ToF_Sensor": [...],
+      "Thermal": [...],
+    }
+    interp_params: 各種別ごとの dict、例は下記デフォルト参照
+    """
+    # デフォルトパラメータ
+    default_params = {
+        "Accelerometer": {"limit": 3},
+        "Rotation":      {"limit": 2},
+        "ToF_Sensor":    {"method": None,   "limit": 2, "fill_value": 0},
+        "Thermal":       {"limit": 5},
+    }
+    if interp_params is None:
+        interp_params = default_params
+
+    # ソート & コピー
+    df = df.sort_values(list(group_cols) + [time_col]).copy()
+
+    # --- 一時ディレクトリ準備 ---
+    tmp_root = Path(tmp_parent)
+    tmp_root.mkdir(exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(dir=tmp_root)
+
+    # --- グループ化して並列実行 ---
+    groups = [g for _, g in df.groupby(list(group_cols), sort=False)]
+    paths = Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(_interpolate_and_dump)(
+            g,
+            sensor_type_groups,
+            interp_params,
+            time_col,
+            tmp_dir
+        )
+        for g in tqdm(groups, desc="interp", unit="seq")
+    )
+
+    # --- 結合 & クリーンアップ ---
+    cleaned = pd.concat(pd.read_parquet(p) for p in tqdm(paths, desc="concat"))
+    cleaned = cleaned.sort_index().reset_index(drop=True)
+    if not keep_tmp:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return cleaned
+
+
+def clean_sensor_missing_values(
+    df: pd.DataFrame,
+    sensor_type_groups: dict,
+    acc_clip: tuple = (-40.0, 40.0),
+) -> pd.DataFrame:
+    """
+    センサータイプごに欠損値を適切に処理する関数（調査結果に基づく）
+    
+    ── Rules (調査結果ベース) ────────────────────────────────
+      • Accelerometer :   0 / −1 は正当値 → NaN 化しない  
+                          極端値 |value| > acc_clip → NaN
+      • Rotation      :   NaN のみ欠損値
+      • ToF_Sensor    :   NaN, -1 → 欠損値
+      • Thermal       :   NaN のみ欠損値
+    ─────────────────────────────────────────────────────────
+    """
+    df = df.copy()
+
+    # --- Accelerometer: -1と0をNaN化 --------------------------------
+    acc_cols = sensor_type_groups.get("Accelerometer", [])
+    if acc_cols:
+        df[acc_cols] = df[acc_cols].where(
+            df[acc_cols].abs().le(acc_clip[1]),  # clip both sides
+            np.nan
+        )
+
+    # --- ToF_Sensor: -1をNaN化 -------------------------------------
+    tof_cols = sensor_type_groups.get("ToF_Sensor", [])
+    if tof_cols:
+        for col in tof_cols:
+            df.loc[df[col] == -1, col] = np.nan
+
+    # --- Rotation, Thermal: NaNのみ → 変更なし ----------------------
+    # 何も処理しない
+
+    return df
+
