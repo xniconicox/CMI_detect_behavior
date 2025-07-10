@@ -40,3 +40,5 @@
 デフォルトでは `window_size=128`、`stride=64` を使用しています。
 
 実装した処理の挙動は `notebooks/preprocessing_visualization.ipynb` で確認できます。サンプルデータを用いて線形加速度計算や FFT バンドエネルギーの取得を行い、Matplotlib によるグラフ表示例を掲載しています。
+追加の可視化例として `notebooks/feature_block_demo.ipynb` では、基本統計やFFTエネルギーの計算結果をグラフ化しています。
+
