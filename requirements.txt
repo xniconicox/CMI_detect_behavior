@@ -26,8 +26,6 @@ pickle-mixin>=1.0.0
 pathlib2>=2.3.0
 
 # Utilities
-warnings
-datetime
 json5>=0.9.0
 
 # 設定管理
@@ -115,7 +113,6 @@ pycparser==2.22
 pygments==2.19.2
 pyparsing==3.2.3
 python-dateutil==2.9.0.post0
-python-json-logger==3.3.0
 python-json-logger==3.3.0
 pytz==2025.2
 referencing==0.36.2
