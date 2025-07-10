@@ -25,7 +25,8 @@ warnings.filterwarnings('ignore')
 import tensorflow as tf
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent
+# スクリプトの位置に依存しないよう絶対パスを取得
+project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
 from models.lstm_v2_model import LSTMv2HybridModel, create_lstm_v2_hybrid_model, setup_gpu
@@ -50,12 +51,13 @@ class LSTMv2Trainer:
         """
         self.experiment_name = experiment_name
         self.window_config = window_config
-        self.output_dir = Path(f"../output/experiments/{experiment_name}_{window_config}")
+        # プロジェクトルートからのパスに変更
+        self.output_dir = project_root / "output" / "experiments" / f"{experiment_name}_{window_config}"
         self.models_dir = self.output_dir / "models"
         self.results_dir = self.output_dir / "results"
-        
+
         # 前処理済みデータのパス
-        self.preprocessed_dir = Path(f"/mnt/c/Users/ShunK/works/CMI_comp/output/experiments/lstm_v2_{window_config}/preprocessed")
+        self.preprocessed_dir = project_root / "output" / "experiments" / f"lstm_v2_{window_config}" / "preprocessed"
         
         # ディレクトリ作成
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -126,8 +128,7 @@ class LSTMv2Trainer:
         # Demographics特徴量の読み込み（最適化版 or オリジナル）
         if use_optimized_demographics:
             # 最適化されたdemographics特徴量を使用
-            # notebookから実行する場合のパス調整
-            optimized_demo_dir = Path("../results/demographics_optimization")
+            optimized_demo_dir = project_root / "results" / "demographics_optimization"
             train_demo_path = optimized_demo_dir / "X_demographics_train_optimized.npy"
             val_demo_path = optimized_demo_dir / "X_demographics_val_optimized.npy"
             
