@@ -6,18 +6,96 @@ Added **A–L** section headers that map directly to the design document
 feature block.
 """
 
-# ============================================================
-# A. IMU ワールド座標変換 (World‑coordinate acceleration)
-#    - quaternion_to_rotation_matrix
-#    - rotate_acceleration
-#    - linear_acceleration
-# ============================================================
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from scipy.signal import find_peaks
 
+# ============================================================
+# A. 基本統計量 (mean / std / range / RMS / energy)
+# ============================================================
+### --- Block A Summary ---------------------------------------
+# dims: 56 | 推奨モデル: LightGBM_all / non
+# 広域量的特徴――窓全体の強度・分布を圧縮
+# ------------------------------------------------------------
+def compute_basic_statistics(X_windows: np.ndarray) -> np.ndarray:
+    """Compute Block F statistics per window."""
+    means  = X_windows.mean(axis=1)
+    stds   = X_windows.std(axis=1)
+    ranges = X_windows.max(axis=1) - X_windows.min(axis=1)
+    rms    = np.sqrt((X_windows ** 2).mean(axis=1))
+    energy = (X_windows ** 2).sum(axis=1)
+    if X_windows.shape[2] >= 3:
+        mag = np.linalg.norm(X_windows[:, :, :3], axis=2)
+        mag_mean = mag.mean(axis=1, keepdims=True)
+        mag_std  = mag.std(axis=1, keepdims=True)
+        return np.hstack([means, stds, ranges, rms, energy, mag_mean, mag_std])
+    return np.hstack([means, stds, ranges, rms, energy])
 
+
+# ============================================================
+# B. ピーク & 周期特徴量
+# ============================================================
+### --- Block B Summary ---------------------------------------
+# dims: 18 | 推奨モデル: LightGBM_all / non
+# BFRB の “反復性” をカウントして数値化
+# ------------------------------------------------------------
+
+def extract_peak_features(window: np.ndarray) -> np.ndarray:
+    """Return per‑axis peak counts (Block D)."""
+    return np.array([len(find_peaks(window[:, i])[0]) for i in range(window.shape[1])], dtype=np.float32)
+
+
+def compute_peak_features(X_windows: np.ndarray) -> np.ndarray:
+    """Block D wrapper for many windows."""
+    return np.vstack([extract_peak_features(w) for w in X_windows])
+
+# ============================================================
+# C. 正規化ユーティリティ (sensor / tabular)
+# ============================================================
+
+def normalize_sensor_data(X: np.ndarray):
+    """Block C‑1: z‑score normalisation for sensor windows."""
+    scaler = StandardScaler()
+    n, t, f = X.shape
+    X_flat = np.nan_to_num(X.reshape(-1, f), nan=0.0)
+    X_norm = scaler.fit_transform(X_flat).reshape(n, t, f)
+    return X_norm, scaler
+
+
+def normalize_tabular_data(X: np.ndarray):
+    """Block C‑2: z‑score normalisation for demographics/tabular."""
+    scaler = StandardScaler()
+    return scaler.fit_transform(X), scaler
+
+# ============================================================
+# C. FFT バンドエネルギー (0.5–20 Hz)
+# ============================================================
+### --- Block C Summary ---------------------------------------
+# dims: 10 | 推奨モデル: LightGBM_all / non
+# 動作リズム・速度の周波数分布
+# ------------------------------------------------------------
+
+def compute_fft_band_energy(X_windows: np.ndarray, fs: float = 50.0, bands=None) -> np.ndarray:
+    """Compute block G FFT band energies."""
+    if bands is None:
+        bands = [(0.5, 2), (2, 5), (5, 10), (10, 20)]
+    n_win, win_len, n_feat = X_windows.shape
+    freqs = np.fft.rfftfreq(win_len, d=1.0 / fs)
+    power = np.abs(np.fft.rfft(X_windows, axis=1)) ** 2
+    energies = []
+    for lo, hi in bands:
+        mask = (freqs >= lo) & (freqs < hi)
+        energies.append(power[:, mask, :].sum(axis=1))
+    return np.concatenate(energies, axis=1)
+
+# ============================================================
+# D. ワールド線形加速度 & IMU World-Frame 変換
+# ============================================================
+### --- Block D Summary ---------------------------------------
+# dims: 21 | 推奨モデル: LightGBM_all / CNN-GRU
+# 姿勢成分を除去した「純粋な動き」ベクトル
+# ------------------------------------------------------------
 def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
     """Convert quaternion **q = [w, x, y, z]** to its 3×3 rotation matrix.
 
@@ -42,10 +120,75 @@ def linear_acceleration(acc: np.ndarray, quat: np.ndarray, gravity: float = 9.81
     gravity_vec = np.array([0, 0, gravity])
     return acc_world - gravity_vec
 
-# ============================================================
-# B. スライディングウィンドウ生成 (windows + demographics)
-# ============================================================
 
+# ============================================================
+# E. 欠損フラグ (missing sensor flags)
+# ============================================================
+### --- Block E Summary ---------------------------------------
+# dims: 3 | 推奨モデル: すべて
+# 未接続センサを one-hot で明示
+# ------------------------------------------------------------
+def add_missing_sensor_flags(df: pd.DataFrame, sensor_groups: dict) -> pd.DataFrame:
+    """Add boolean missing‑sensor flags per group (Block E)."""
+    for flag, cols in sensor_groups.items():
+        df[flag] = df[cols].isna().all(axis=1)
+    return df
+
+# ============================================================
+# G. TDA Stats (Persistence Image)
+# ============================================================
+### --- Block G Summary ---------------------------------------
+# dims: 8 | 推奨モデル: CNN-GRU concat / LightGBM
+# 位相的周期性を独自にエンコード
+# ------------------------------------------------------------
+def compute_persistence_image_features(X_windows: np.ndarray, dimension:int=1, n_bins:int=20, sigma:float=0.1) -> np.ndarray:
+    """Block J: persistence image features via giotto‑tda."""
+    from gtda.time_series import TakensEmbedding
+    from gtda.homology import VietorisRipsPersistence
+    from gtda.diagrams import PersistenceImage
+
+    emb = TakensEmbedding(time_delay=1, dimension=dimension)
+    vrp = VietorisRipsPersistence(homology_dimensions=[0, 1])
+    pim = PersistenceImage(bandwidth=sigma, n_bins=(n_bins, n_bins))
+    feats = []
+    for w in X_windows:
+        e = emb.fit_transform(w)
+        d = vrp.fit_transform(e[np.newaxis, ...])
+        img = pim.fit_transform(d)
+        feats.append(img.reshape(-1))
+    return np.array(feats, dtype=np.float32)
+
+
+# ============================================================
+# H. Auto-Encoder 再構成誤差
+# ============================================================
+### --- Block H Summary ---------------------------------------
+# dims: 4 | 推奨モデル: LightGBM / Binary-GRU (aux)
+# 異常度スコアで BFRB 境界を補強
+# ------------------------------------------------------------
+
+def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np.ndarray:
+    """Block K: per‑window MSE reconstruction error from a trained AE."""
+    recon = model.predict(X_windows, verbose=0)
+    return ((X_windows - recon) ** 2).mean(axis=(1, 2), keepdims=True)
+
+
+# ============================================================
+# I. 合成 Tabular (= A–H)
+# ============================================================
+### --- Block I Summary ---------------------------------------
+# dims: 120 | 推奨モデル: LightGBM_all / CatBoost
+# 木モデル用に Tabular 特徴を統合
+# ------------------------------------------------------------
+# （統合処理は学習パイプライン側で実施）
+
+# ============================================================
+# J. IMU Sliding Window Tensor
+# ============================================================
+### --- Block J Summary ---------------------------------------
+# dims: 7×256 = 1 792 | 推奨モデル: Binary-GRU / CNN-GRU
+# 局所パターン＋長期文脈を時系列テンソルで捕捉
+# ------------------------------------------------------------
 def create_sliding_windows_with_demographics(
     df: pd.DataFrame,
     window_size: int,
@@ -83,141 +226,14 @@ def create_sliding_windows_with_demographics(
         info,
     )
 
-# ============================================================
-# C. 正規化ユーティリティ (sensor / tabular)
-# ============================================================
-
-def normalize_sensor_data(X: np.ndarray):
-    """Block C‑1: z‑score normalisation for sensor windows."""
-    scaler = StandardScaler()
-    n, t, f = X.shape
-    X_flat = np.nan_to_num(X.reshape(-1, f), nan=0.0)
-    X_norm = scaler.fit_transform(X_flat).reshape(n, t, f)
-    return X_norm, scaler
-
-
-def normalize_tabular_data(X: np.ndarray):
-    """Block C‑2: z‑score normalisation for demographics/tabular."""
-    scaler = StandardScaler()
-    return scaler.fit_transform(X), scaler
 
 # ============================================================
-# D. ピーク数特徴量 (peak counts)
+# K. ToF 3D Voxel Tensor
 # ============================================================
-
-def extract_peak_features(window: np.ndarray) -> np.ndarray:
-    """Return per‑axis peak counts (Block D)."""
-    return np.array([len(find_peaks(window[:, i])[0]) for i in range(window.shape[1])], dtype=np.float32)
-
-
-def compute_peak_features(X_windows: np.ndarray) -> np.ndarray:
-    """Block D wrapper for many windows."""
-    return np.vstack([extract_peak_features(w) for w in X_windows])
-
-# ============================================================
-# E. 欠損センサ検知フラグ (missing flags)
-# ============================================================
-
-def add_missing_sensor_flags(df: pd.DataFrame, sensor_groups: dict) -> pd.DataFrame:
-    """Add boolean missing‑sensor flags per group (Block E)."""
-    for flag, cols in sensor_groups.items():
-        df[flag] = df[cols].isna().all(axis=1)
-    return df
-
-# ============================================================
-# F. 基本統計量 (mean/std/range/RMS/energy)
-# ============================================================
-
-def compute_basic_statistics(X_windows: np.ndarray) -> np.ndarray:
-    """Compute Block F statistics per window."""
-    means  = X_windows.mean(axis=1)
-    stds   = X_windows.std(axis=1)
-    ranges = X_windows.max(axis=1) - X_windows.min(axis=1)
-    rms    = np.sqrt((X_windows ** 2).mean(axis=1))
-    energy = (X_windows ** 2).sum(axis=1)
-    if X_windows.shape[2] >= 3:
-        mag = np.linalg.norm(X_windows[:, :, :3], axis=2)
-        mag_mean = mag.mean(axis=1, keepdims=True)
-        mag_std  = mag.std(axis=1, keepdims=True)
-        return np.hstack([means, stds, ranges, rms, energy, mag_mean, mag_std])
-    return np.hstack([means, stds, ranges, rms, energy])
-
-# ============================================================
-# G. FFT バンドエネルギー (0.5‑20 Hz)
-# ============================================================
-
-def compute_fft_band_energy(X_windows: np.ndarray, fs: float = 50.0, bands=None) -> np.ndarray:
-    """Compute block G FFT band energies."""
-    if bands is None:
-        bands = [(0.5, 2), (2, 5), (5, 10), (10, 20)]
-    n_win, win_len, n_feat = X_windows.shape
-    freqs = np.fft.rfftfreq(win_len, d=1.0 / fs)
-    power = np.abs(np.fft.rfft(X_windows, axis=1)) ** 2
-    energies = []
-    for lo, hi in bands:
-        mask = (freqs >= lo) & (freqs < hi)
-        energies.append(power[:, mask, :].sum(axis=1))
-    return np.concatenate(energies, axis=1)
-
-# ============================================================
-# H. 利き手反転正規化 (Y/Z flip for left‑handed)
-# ============================================================
-
-def handedness_normalization(df: pd.DataFrame, axis_cols: list, handedness_col: str = "handedness") -> pd.DataFrame:
-    """Flip Y/Z axes for left‑handed subjects (Block H)."""
-    y_col, z_col = axis_cols[1], axis_cols[2]
-    df.loc[df[handedness_col] == 0, [y_col, z_col]] *= -1
-    return df
-
-# ============================================================
-# I. Wavelet 周波数特徴 (DWT energies)
-# ============================================================
-
-def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level: int = 3) -> np.ndarray:
-    """Block I: discrete wavelet band energies using PyWavelets."""
-    import pywt
-    feats = []
-    for w in X_windows:
-        ax_feats = []
-        for i in range(w.shape[1]):
-            coeffs = pywt.wavedec(w[:, i], wavelet=wavelet, level=level)
-            ax_feats += [np.sum(c ** 2) for c in coeffs]
-        feats.append(ax_feats)
-    return np.array(feats, dtype=np.float32)
-
-# ============================================================
-# J. TDA (Persistence Image)
-# ============================================================
-
-def compute_persistence_image_features(X_windows: np.ndarray, dimension:int=1, n_bins:int=20, sigma:float=0.1) -> np.ndarray:
-    """Block J: persistence image features via giotto‑tda."""
-    from gtda.time_series import TakensEmbedding
-    from gtda.homology import VietorisRipsPersistence
-    from gtda.diagrams import PersistenceImage
-
-    emb = TakensEmbedding(time_delay=1, dimension=dimension)
-    vrp = VietorisRipsPersistence(homology_dimensions=[0, 1])
-    pim = PersistenceImage(bandwidth=sigma, n_bins=(n_bins, n_bins))
-    feats = []
-    for w in X_windows:
-        e = emb.fit_transform(w)
-        d = vrp.fit_transform(e[np.newaxis, ...])
-        img = pim.fit_transform(d)
-        feats.append(img.reshape(-1))
-    return np.array(feats, dtype=np.float32)
-
-# ============================================================
-# K. Auto‑Encoder 再構成誤差
-# ============================================================
-
-def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np.ndarray:
-    """Block K: per‑window MSE reconstruction error from a trained AE."""
-    recon = model.predict(X_windows, verbose=0)
-    return ((X_windows - recon) ** 2).mean(axis=(1, 2), keepdims=True)
-
-# ============================================================
-# L. ToF 3D Voxel 化
-# ============================================================
+### --- Block K Summary ---------------------------------------
+# dims: 20 480 | 推奨モデル: ToF-3D-CNN
+# 顔・対象物との空間的接近パターンを 3D で表現
+# ------------------------------------------------------------
 
 def tof_to_voxel_tensor(df: pd.DataFrame, fill_value: float = 0.0, prefix: str = "tof_") -> np.ndarray:
     """Block L: convert ToF pixel columns → (T, depth, H, W) tensor."""
@@ -240,3 +256,28 @@ def tof_to_voxel_tensor(df: pd.DataFrame, fill_value: float = 0.0, prefix: str =
                 r, c = divmod(idx, W)
                 tensor[:, d, r, c] = vals
     return tensor
+
+# ============================================================
+# L. 利き手反転正規化 (Y/Z flip for left‑handed)
+# ============================================================
+
+def handedness_normalization(df: pd.DataFrame, axis_cols: list, handedness_col: str = "handedness") -> pd.DataFrame:
+    """Flip Y/Z axes for left‑handed subjects (Block H)."""
+    y_col, z_col = axis_cols[1], axis_cols[2]
+    df.loc[df[handedness_col] == 0, [y_col, z_col]] *= -1
+    return df
+# ============================================================
+# M. Wavelet 周波数特徴 (DWT energies)
+# ============================================================
+
+def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level: int = 3) -> np.ndarray:
+    """Block I: discrete wavelet band energies using PyWavelets."""
+    import pywt
+    feats = []
+    for w in X_windows:
+        ax_feats = []
+        for i in range(w.shape[1]):
+            coeffs = pywt.wavedec(w[:, i], wavelet=wavelet, level=level)
+            ax_feats += [np.sum(c ** 2) for c in coeffs]
+        feats.append(ax_feats)
+    return np.array(feats, dtype=np.float32)

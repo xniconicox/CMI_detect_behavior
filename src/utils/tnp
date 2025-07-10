@@ -1,242 +1,31 @@
-"""
-Preprocessing utilities for the CMI competition (commented version).
 
-Added **A–L** section headers that map directly to the design document
-(section 4‑2) so you can quickly trace which function produces which
-feature block.
-"""
-
-# ============================================================
-# A. IMU ワールド座標変換 (World‑coordinate acceleration)
-#    - quaternion_to_rotation_matrix
-#    - rotate_acceleration
-#    - linear_acceleration
-# ============================================================
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from scipy.signal import find_peaks
-
-
-def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
-    """Convert quaternion **q = [w, x, y, z]** to its 3×3 rotation matrix.
-
-    Part of **Block A** in the feature table (IMU world transformation).
-    """
-    w, x, y, z = q
-    return np.array([
-        [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x ** 2 + y ** 2)],
-    ])
-
-
-def rotate_acceleration(acc: np.ndarray, quat: np.ndarray) -> np.ndarray:
-    """Rotate raw accelerometer vector into the world frame (Block A)."""
-    return quaternion_to_rotation_matrix(quat) @ acc
-
-
-def linear_acceleration(acc: np.ndarray, quat: np.ndarray, gravity: float = 9.81) -> np.ndarray:
-    """Remove gravity after rotation, yielding linear acceleration (Block A)."""
-    acc_world = rotate_acceleration(acc, quat)
-    gravity_vec = np.array([0, 0, gravity])
-    return acc_world - gravity_vec
-
-# ============================================================
-# B. スライディングウィンドウ生成 (windows + demographics)
-# ============================================================
-
-def create_sliding_windows_with_demographics(
-    df: pd.DataFrame,
-    window_size: int,
-    stride: int,
-    sensor_cols: list,
-    demographics_cols: list,
-    min_sequence_length: int = 10,
-    padding_value: float = 0.0,
-):
-    """Block B: generate fixed‑length windows and attach static demographics."""
-    X_sensor_windows, X_demographics_windows, y_windows, info = [], [], [], []
-
-    for (subject, seq_id), g in df.groupby(["subject", "sequence_id"]):
-        seq_len = len(g)
-        if seq_len < min_sequence_length:
-            continue
-        sensor = g[sensor_cols].values
-        demo = g[demographics_cols].iloc[0].values
-        gesture = g["gesture"].iloc[0]
-        need_pad = seq_len < window_size
-        if need_pad:
-            pad = np.full((window_size - seq_len, len(sensor_cols)), padding_value)
-            sensor = np.vstack([sensor, pad])
-        for s in range(0, len(sensor) - window_size + 1, stride):
-            e = s + window_size
-            X_sensor_windows.append(sensor[s:e])
-            X_demographics_windows.append(demo)
-            y_windows.append(gesture)
-            info.append({"subject": subject, "sequence_id": seq_id, "start_idx": s, "end_idx": e, "padded": need_pad})
-
-    return (
-        np.asarray(X_sensor_windows, dtype=np.float32),
-        np.asarray(X_demographics_windows, dtype=np.float32),
-        np.asarray(y_windows),
-        info,
-    )
-
-# ============================================================
-# C. 正規化ユーティリティ (sensor / tabular)
-# ============================================================
-
-def normalize_sensor_data(X: np.ndarray):
-    """Block C‑1: z‑score normalisation for sensor windows."""
-    scaler = StandardScaler()
-    n, t, f = X.shape
-    X_flat = np.nan_to_num(X.reshape(-1, f), nan=0.0)
-    X_norm = scaler.fit_transform(X_flat).reshape(n, t, f)
-    return X_norm, scaler
-
-
-def normalize_tabular_data(X: np.ndarray):
-    """Block C‑2: z‑score normalisation for demographics/tabular."""
-    scaler = StandardScaler()
-    return scaler.fit_transform(X), scaler
-
-# ============================================================
-# D. ピーク数特徴量 (peak counts)
-# ============================================================
+def compute_basic_statistics(X_windows: np.ndarray):
+    ...
 
 def extract_peak_features(window: np.ndarray) -> np.ndarray:
-    """Return per‑axis peak counts (Block D)."""
-    return np.array([len(find_peaks(window[:, i])[0]) for i in range(window.shape[1])], dtype=np.float32)
-
-
-def compute_peak_features(X_windows: np.ndarray) -> np.ndarray:
-    """Block D wrapper for many windows."""
-    return np.vstack([extract_peak_features(w) for w in X_windows])
-
-# ============================================================
-# E. 欠損センサ検知フラグ (missing flags)
-# ============================================================
-
-def add_missing_sensor_flags(df: pd.DataFrame, sensor_groups: dict) -> pd.DataFrame:
-    """Add boolean missing‑sensor flags per group (Block E)."""
-    for flag, cols in sensor_groups.items():
-        df[flag] = df[cols].isna().all(axis=1)
-    return df
-
-# ============================================================
-# F. 基本統計量 (mean/std/range/RMS/energy)
-# ============================================================
-
-def compute_basic_statistics(X_windows: np.ndarray) -> np.ndarray:
-    """Compute Block F statistics per window."""
-    means  = X_windows.mean(axis=1)
-    stds   = X_windows.std(axis=1)
-    ranges = X_windows.max(axis=1) - X_windows.min(axis=1)
-    rms    = np.sqrt((X_windows ** 2).mean(axis=1))
-    energy = (X_windows ** 2).sum(axis=1)
-    if X_windows.shape[2] >= 3:
-        mag = np.linalg.norm(X_windows[:, :, :3], axis=2)
-        mag_mean = mag.mean(axis=1, keepdims=True)
-        mag_std  = mag.std(axis=1, keepdims=True)
-        return np.hstack([means, stds, ranges, rms, energy, mag_mean, mag_std])
-    return np.hstack([means, stds, ranges, rms, energy])
-
-# ============================================================
-# G. FFT バンドエネルギー (0.5‑20 Hz)
-# ============================================================
+    ...
 
 def compute_fft_band_energy(X_windows: np.ndarray, fs: float = 50.0, bands=None) -> np.ndarray:
-    """Compute block G FFT band energies."""
-    if bands is None:
-        bands = [(0.5, 2), (2, 5), (5, 10), (10, 20)]
-    n_win, win_len, n_feat = X_windows.shape
-    freqs = np.fft.rfftfreq(win_len, d=1.0 / fs)
-    power = np.abs(np.fft.rfft(X_windows, axis=1)) ** 2
-    energies = []
-    for lo, hi in bands:
-        mask = (freqs >= lo) & (freqs < hi)
-        energies.append(power[:, mask, :].sum(axis=1))
-    return np.concatenate(energies, axis=1)
+    ...
 
-# ============================================================
-# H. 利き手反転正規化 (Y/Z flip for left‑handed)
-# ============================================================
+def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
+    ...
 
-def handedness_normalization(df: pd.DataFrame, axis_cols: list, handedness_col: str = "handedness") -> pd.DataFrame:
-    """Flip Y/Z axes for left‑handed subjects (Block H)."""
-    y_col, z_col = axis_cols[1], axis_cols[2]
-    df.loc[df[handedness_col] == 0, [y_col, z_col]] *= -1
-    return df
+def add_missing_sensor_flags(df: pd.DataFrame, sensor_groups: dict) -> pd.DataFrame:
+    ...
 
-# ============================================================
-# I. Wavelet 周波数特徴 (DWT energies)
-# ============================================================
+def create_sliding_windows_with_demographics(...):
+    ...
 
-def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level: int = 3) -> np.ndarray:
-    """Block I: discrete wavelet band energies using PyWavelets."""
-    import pywt
-    feats = []
-    for w in X_windows:
-        ax_feats = []
-        for i in range(w.shape[1]):
-            coeffs = pywt.wavedec(w[:, i], wavelet=wavelet, level=level)
-            ax_feats += [np.sum(c ** 2) for c in coeffs]
-        feats.append(ax_feats)
-    return np.array(feats, dtype=np.float32)
 
-# ============================================================
-# J. TDA (Persistence Image)
-# ============================================================
+def compute_persistence_image_features(...):
+    ...
 
-def compute_persistence_image_features(X_windows: np.ndarray, dimension:int=1, n_bins:int=20, sigma:float=0.1) -> np.ndarray:
-    """Block J: persistence image features via giotto‑tda."""
-    from gtda.time_series import TakensEmbedding
-    from gtda.homology import VietorisRipsPersistence
-    from gtda.diagrams import PersistenceImage
+def compute_autoencoder_reconstruction_error(...):
+    ...
 
-    emb = TakensEmbedding(time_delay=1, dimension=dimension)
-    vrp = VietorisRipsPersistence(homology_dimensions=[0, 1])
-    pim = PersistenceImage(bandwidth=sigma, n_bins=(n_bins, n_bins))
-    feats = []
-    for w in X_windows:
-        e = emb.fit_transform(w)
-        d = vrp.fit_transform(e[np.newaxis, ...])
-        img = pim.fit_transform(d)
-        feats.append(img.reshape(-1))
-    return np.array(feats, dtype=np.float32)
+def create_sliding_windows_with_demographics(...):
+    ...
 
-# ============================================================
-# K. Auto‑Encoder 再構成誤差
-# ============================================================
-
-def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np.ndarray:
-    """Block K: per‑window MSE reconstruction error from a trained AE."""
-    recon = model.predict(X_windows, verbose=0)
-    return ((X_windows - recon) ** 2).mean(axis=(1, 2), keepdims=True)
-
-# ============================================================
-# L. ToF 3D Voxel 化
-# ============================================================
-
-def tof_to_voxel_tensor(df: pd.DataFrame, fill_value: float = 0.0, prefix: str = "tof_") -> np.ndarray:
-    """Block L: convert ToF pixel columns → (T, depth, H, W) tensor."""
-    import re
-    pat = re.compile(fr"^{prefix}(\d+)_v(\d+)$")
-    matches = [(c, pat.match(c)) for c in df.columns]
-    sensors = sorted({int(m.group(1)) for _, m in matches if m})
-    idxs = [int(m.group(2)) for _, m in matches if m]
-    if not sensors:
-        raise ValueError("No ToF columns found")
-    W = H = int(np.sqrt(max(idxs) + 1))
-    T = len(df)
-    D = len(sensors)
-    tensor = np.full((T, D, H, W), fill_value, dtype=np.float32)
-    for d, sn in enumerate(sensors):
-        for idx in range(H * W):
-            col = f"{prefix}{sn}_v{idx}"
-            if col in df.columns:
-                vals = df[col].replace(-1, fill_value).to_numpy(dtype=np.float32)
-                r, c = divmod(idx, W)
-                tensor[:, d, r, c] = vals
-    return tensor
+def tof_to_voxel_tensor(...):
+    ...
