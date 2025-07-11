@@ -1,5 +1,6 @@
 # 前処理パイプライン概要
 
+
 このプロジェクトではセンサーデータと Demographics 情報を統合する前処理モジュール `src/utils/preprocessing.py` を作成しました。
 
 ## 主な処理内容

@@ -31,3 +31,5 @@ data/*.zip
 *.env
 .kaggle/
 
+# Cache directories
+notebooks/cache/
