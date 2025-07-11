@@ -46,7 +46,7 @@
 - `compute_basic_statistics` … 平均・標準偏差・RMS など (Block A)
 - `compute_peak_features` … ピーク数・周期情報 (Block B)
 - `compute_fft_band_energy` … 0.5–20 Hz の周波数帯エネルギー (Block C)
-- `compute_persistence_image_features` … 位相的特徴量 (Block G)
+- `compute_persistence_image_features` … 位相的特徴量 (Block G)　tda?
 - `compute_autoencoder_reconstruction_error` … AE再構成誤差 (Block H)
 - `compute_wavelet_features` … DWTバンドエネルギー (Block M)
 

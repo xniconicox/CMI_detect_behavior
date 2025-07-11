@@ -109,16 +109,127 @@ def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
     ])
 
 
-def rotate_acceleration(acc: np.ndarray, quat: np.ndarray) -> np.ndarray:
-    """Rotate raw accelerometer vector into the world frame (Block A)."""
-    return quaternion_to_rotation_matrix(quat) @ acc
+# def rotate_acceleration(acc: np.ndarray, quat: np.ndarray) -> np.ndarray:
+#     """Rotate raw accelerometer vector into the world frame (Block A)."""
+#     return quaternion_to_rotation_matrix(quat) @ acc
 
 
-def linear_acceleration(acc: np.ndarray, quat: np.ndarray, gravity: float = 9.81) -> np.ndarray:
-    """Remove gravity after rotation, yielding linear acceleration (Block A)."""
-    acc_world = rotate_acceleration(acc, quat)
-    gravity_vec = np.array([0, 0, gravity])
-    return acc_world - gravity_vec
+# def linear_acceleration(acc: np.ndarray, quat: np.ndarray, gravity: float = 9.81) -> np.ndarray:
+#     """Remove gravity after rotation, yielding linear acceleration (Block A)."""
+#     acc_world = rotate_acceleration(acc, quat)
+#     gravity_vec = np.array([0, 0, gravity])
+#     return acc_world - gravity_vec
+# セルD-1：IMU をワールド座標系に変換＋線形加速度算出を並列＆ディスクキャッシュで実装
+import tempfile, shutil, uuid, gc
+from pathlib import Path
+from joblib import Parallel, delayed
+from tqdm.auto import tqdm
+import pandas as pd, numpy as np
+
+def _world_transform_and_dump(
+    seq_df: pd.DataFrame,
+    time_col: str,
+    tmp_dir: str,
+) -> str:
+    """シーケンス毎に world-frame 変換＋線形加速度を計算して Parquet 出力"""
+    seg = seq_df.sort_values(time_col).copy()
+    accs = seg[['acc_x','acc_y','acc_z']].to_numpy()
+    quats = seg[['rot_w','rot_x','rot_y','rot_z']].to_numpy()
+
+    # 結果用配列
+    acc_w    = np.empty_like(accs)
+    lin_acc  = np.empty_like(accs)
+    g_vec    = np.array([0,0,9.81])
+
+    # 各行を変換
+    for i, (acc, q) in enumerate(zip(accs, quats)):
+        R = quaternion_to_rotation_matrix(q)
+        aw = R @ acc
+        acc_w[i]   = aw
+        lin_acc[i] = aw - g_vec
+
+    # DataFrame に列追加
+    seg[['acc_w_x','acc_w_y','acc_w_z']] = acc_w
+    seg[['lin_acc_x','lin_acc_y','lin_acc_z']] = lin_acc
+
+    # Parquet 出力
+    fname = f"seq_{seq_df['sequence_id'].iloc[0]}_{uuid.uuid4().hex}.parquet"
+    out_path = Path(tmp_dir) / fname
+    seg.to_parquet(out_path, compression='zstd')
+
+    # メモリ解放
+    del seg, accs, quats, acc_w, lin_acc
+    gc.collect()
+    return str(out_path)
+
+# セルD-1：IMU→World変換＆線形加速度を subject 単位で処理＋キャッシュ
+import tempfile, shutil, os, gc
+from pathlib import Path
+import pandas as pd, numpy as np
+from tqdm.auto import tqdm
+def transform_world_frame_by_subject(
+    df: pd.DataFrame,
+    cache_path: Path,
+    group_col: str = "subject",
+    time_col: str = "sequence_counter",
+    tmp_parent: str = "tmp_world_subj",
+    keep_tmp: bool = False,
+) -> pd.DataFrame:
+    """
+    subject ごとに IMU をワールド座標系に変換 & 重力除去 → Parquet キャッシュ保存
+    """
+    # ソート＆コピー
+    df = df.sort_values([group_col, "sequence_id", time_col]).copy()
+
+    # 一時ディレクトリ
+    tmp_root = Path(tmp_parent); tmp_root.mkdir(exist_ok=True)
+    parts = []
+
+    # subject ごとにループ
+    for subj, sub_df in tqdm(df.groupby(group_col, sort=True),
+                             desc="subject", unit="sub"):
+        acc_arr  = sub_df[['acc_x','acc_y','acc_z']].to_numpy()
+        quat_arr = sub_df[['rot_w','rot_x','rot_y','rot_z']].to_numpy()
+
+        # 結果配列
+        acc_w = np.empty_like(acc_arr)
+        lin   = np.empty_like(acc_arr)
+        g_vec = np.array([0,0,9.81])
+
+        # 各フレームを変換
+        for i in range(len(sub_df)):
+            R = quaternion_to_rotation_matrix(quat_arr[i])
+            aw = R.dot(acc_arr[i])
+            acc_w[i] = aw
+            lin[i]   = aw - g_vec
+
+        # 列を追加
+        sub_df[['acc_w_x','acc_w_y','acc_w_z']]   = acc_w
+        sub_df[['lin_acc_x','lin_acc_y','lin_acc_z']] = lin
+
+        # Parquet 出力
+        out_path = tmp_root / f"subject_{subj}.parquet"
+        sub_df.to_parquet(out_path, compression="zstd")
+        parts.append(out_path)
+
+        # メモリ解放
+        del sub_df, acc_arr, quat_arr, acc_w, lin
+        gc.collect()
+
+    # すべて読み込み＆結合
+    world_df = pd.concat(
+        (pd.read_parquet(p) for p in tqdm(parts, desc="concat", unit="file")),
+        ignore_index=True
+    )
+
+    # 一時ディレクトリ削除
+    if not keep_tmp:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+    # キャッシュ保存
+    world_df.to_parquet(cache_path, compression="zstd")
+    return world_df
+
 
 
 # ============================================================

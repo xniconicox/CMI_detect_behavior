@@ -33,3 +33,4 @@ data/*.zip
 
 # Cache directories
 notebooks/cache/
+notebooks/tmp*/
