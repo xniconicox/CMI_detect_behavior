@@ -70,6 +70,15 @@ data/
 🏷️ クラス数: <n_classes>
 ```
 
+## 欠損統計と値の範囲
+
+EDA で得られた主な統計は以下の通りです。
+
+- `train.csv` の欠損数例：回転系 `rot_w`～`rot_z` 各列は 3692 件、温度センサ `thm_1` は 6987 件、ToF ピクセル列（例 `tof_5_v59`）は 30142 件【F:doc/EDA.html†L8566-L8578】。
+- ToF センサの `-1` 値は非常に多く、`tof_1_v0` で 289,963 件、`tof_1_v1` で 294,126 件などが確認されています【F:doc/EDA.html†L8579-L8588】。
+- 欠損率上位 20 列は `thm_5` が約 5.8%、`tof_5_v10` など ToF ピクセルが約 5.2% を占めます【F:doc/EDA.html†L8965-L8976】。
+- `train_demographics.csv` の統計例では、年齢の平均が約 21.8 歳（10～53 歳）、身長の平均が約 168 cm（135～190.5 cm）の範囲となっています【F:doc/EDA.html†L7998-L8011】。
+
 ## 参考
 
 詳細な実装は `src/utils/preprocessing.py` と `notebooks/lstm_v2_preprocessing_fixed.py` を参照してください。EDA結果や欠損統計の例は `doc/EDA.html` にまとめられています【F:doc/EDA.html†L8566-L8590】。
