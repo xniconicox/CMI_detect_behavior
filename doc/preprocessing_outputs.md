@@ -9,7 +9,7 @@
 | `train_windows.pkl` / `test_windows.pkl` | ウィンドウ化された IMU センサテンソル | `(n_windows, 128, 12)` | GRU/CNN 系モデルの入力 |
 | `train_demographics.pkl` / `test_demographics.pkl` | ウィンドウ単位の Demographics 特徴量 | `(n_windows, 7)` | 時系列モデルとの結合用 |
 | `train_tabular.pkl` / `test_tabular.pkl` | Block A–H,M を統合した Tabular 特徴量 | `(n_windows, 120)` | LightGBM/CatBoost 用 |
-| `train_tof_voxel.pkl` / `test_tof_voxel.pkl` | ToF ピクセルを (T, depth, H, W) へ整形したテンソル | `(time, 5, 8, 8)` | ToF 3D CNN 用 |
+| `train_tof_windows.pkl` / `test_tof_windows.pkl` (旧 `train_tof_voxel.pkl` / `test_tof_voxel.pkl`) | ToF ピクセルを (T, depth, H, W) へ整形したテンソル | `(time, 5, 8, 8)` | ToF 3D CNN 用 |
 | `train_labels.pkl` / `test_labels.pkl` | 各ウィンドウのラベル ID | `(n_windows,)` | 教師データ |
 | `train_info.pkl` / `test_info.pkl` | `sequence_id` や `start_idx` などのメタ情報 | - | 後続処理用 |
 | `preprocessor.pkl` | 学習済み `Preprocessor` を `Preprocessor.save()` で保存したファイル | - | `Preprocessor.load()` で読み込み |
