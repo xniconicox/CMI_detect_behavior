@@ -13,7 +13,7 @@
 | `train_tof_voxel.pkl` / `test_tof_voxel.pkl` | ToF ピクセルを (T, depth, H, W) へ整形したテンソル | `(time, depth, H, W)` | ToF 3D CNN 用 |
 | `train_labels.pkl` / `test_labels.pkl` | 各ウィンドウのラベル ID | `(n_windows,)` | 教師データ |
 | `train_info.pkl` / `test_info.pkl` | `sequence_id` や `start_idx` などのメタ情報 | - | 後続処理用 |
-| `preprocessor.pkl` | 学習済み `Preprocessor` オブジェクト | - | 推論時の再利用 |
+| `preprocessor.pkl` | 学習済み `Preprocessor` を `Preprocessor.save()` で保存したファイル | - | `Preprocessor.load()` で読み込み |
 
 ※ `--mode predict` で実行した場合は `predict_*.pkl` が生成されます。
 
