@@ -2,6 +2,8 @@
 
 本プロジェクトで用いる前処理ステップを日本語で整理します。センサ時系列データと年齢・性別などの **Demographics** 情報をどの順番で処理し、各モデルに入力するかをまとめました。
 
+生成される前処理出力ファイルの一覧は [preprocessing_outputs.md](preprocessing_outputs.md) にまとめています。
+
 ## 1. 生データのロード
 
 - `train.csv` / `test.csv` … センサ時系列 (加速度, 回転, Thermal, ToF など)
