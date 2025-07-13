@@ -28,6 +28,7 @@ from .feature_engineering import (
     compute_peak_features,
     compute_fft_band_energy,
 )
+from .imu import add_world_acc_features
 
 
 class WindowTensorBuilder:
@@ -159,8 +160,12 @@ class Preprocessor:
         use_handedness: bool = True,
         use_basic_cleaning: bool = True,
         use_interp_cleaning: bool = True,
+        use_world_acc: bool | None = None,
     ) -> None:
         self.config = config or load_config()
+        pp = self.config.get("preprocessing", {})
+        if use_world_acc is None:
+            use_world_acc = pp.get("use_world_acc", False)
         self.win_builder = WindowTensorBuilder(self.config)
         self.tab_builder = TabularFeatureBuilder(self.config)
         self.tof_builder = ToFVoxelBuilder(self.config)
@@ -172,17 +177,23 @@ class Preprocessor:
         self.use_handedness = use_handedness
         self.use_basic_cleaning = use_basic_cleaning
         self.use_interp_cleaning = use_interp_cleaning
+        self.use_world_acc = use_world_acc
 
         pp = self.config.get("preprocessing", {})
         depth = pp.get("tof_depth", 5)
         h = pp.get("tof_height", 8)
         w = pp.get("tof_width", 8)
         self.sensor_type_groups = {
-            "Accelerometer": self.config.get("sensor_acc_cols", []),
+            "Accelerometer": list(self.config.get("sensor_acc_cols", [])),
             "Rotation": self.config.get("sensor_rot_cols", []),
             "Thermal": self.config.get("sensor_thm_cols", []),
             "ToF_Sensor": [f"tof_{d}_v{i}" for d in range(1, depth + 1) for i in range(h * w)],
         }
+        if self.use_world_acc:
+            self.sensor_type_groups["Accelerometer"].extend(
+                [f"acc_w_{ax}" for ax in "xyz"]
+                + [f"lin_acc_{ax}" for ax in "xyz"]
+            )
 
         interp_path = Path(__file__).resolve().parents[2] / "config" / "interp_params.yaml"
         if interp_path.exists():
@@ -209,6 +220,8 @@ class Preprocessor:
                 interp_params=self.interp_params,
                 keep_cols=keep,
             )
+        if self.use_world_acc:
+            processed = add_world_acc_features(processed)
         return processed
 
     def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":

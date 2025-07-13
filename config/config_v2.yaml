@@ -22,6 +22,7 @@ preprocessing:
   tof_depth: 5
   tof_height: 8
   tof_width: 8
+  use_world_acc: false
 
 
 sensor_acc_cols:
