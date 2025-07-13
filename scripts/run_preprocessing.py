@@ -14,9 +14,9 @@ specified in the config file and saves processed data under
 from __future__ import annotations
 
 import argparse
-import pickle
 from pathlib import Path
 from typing import Any
+import pickle
 
 import pandas as pd
 import yaml
@@ -76,13 +76,11 @@ def main() -> None:
         # save results
         save_dict(train_data, "train", pre_dir)
         save_dict(test_data, "test", pre_dir)
-        with open(pre_dir / "preprocessor.pkl", "wb") as f:
-            pickle.dump(pp, f)
+        pp.save(pre_dir / "preprocessor.pkl")
 
     else:  # predict
         df = pd.read_csv(data_dir / "test.csv")
-        with open(pre_dir / "preprocessor.pkl", "rb") as f:
-            pp = pickle.load(f)
+        pp = Preprocessor.load(pre_dir / "preprocessor.pkl")
         data = pp.transform(df, use_cache=args.use_cache)
         save_dict(data, "predict", pre_dir)
 

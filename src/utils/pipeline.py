@@ -283,3 +283,37 @@ class Preprocessor:
     def fit_transform(self, df: pd.DataFrame, use_cache: bool = True) -> dict:
         self.fit(df, use_cache=use_cache)
         return self.transform(df, use_cache=use_cache)
+
+    def save(self, path: Path) -> None:
+        """Save scaler objects and settings to a pickle file."""
+        data = {
+            "config": self.config,
+            "use_handedness": self.use_handedness,
+            "use_basic_cleaning": self.use_basic_cleaning,
+            "use_interp_cleaning": self.use_interp_cleaning,
+            "use_world_acc": self.use_world_acc,
+            "sensor_scaler": self.sensor_scaler,
+            "demo_scaler": self.demo_scaler,
+            "tab_scaler": self.tab_scaler,
+            "_fitted": self._fitted,
+        }
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+
+    @classmethod
+    def load(cls, path: Path) -> "Preprocessor":
+        """Load scalers and settings from a pickle file."""
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        obj = cls(
+            data.get("config"),
+            use_handedness=data.get("use_handedness", True),
+            use_basic_cleaning=data.get("use_basic_cleaning", True),
+            use_interp_cleaning=data.get("use_interp_cleaning", True),
+            use_world_acc=data.get("use_world_acc"),
+        )
+        obj.sensor_scaler = data["sensor_scaler"]
+        obj.demo_scaler = data["demo_scaler"]
+        obj.tab_scaler = data["tab_scaler"]
+        obj._fitted = data.get("_fitted", False)
+        return obj

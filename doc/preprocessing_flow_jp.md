@@ -76,3 +76,8 @@
 
 ウィンドウ化前後の正規化や利き手補正の順序は、`doc/preprocessing_pipeline.md` の「主な処理の流れ」に準拠しています【F:doc/preprocessing_pipeline.md†L21-L37】。
 
+### 前処理結果の保存と再利用
+
+`Preprocessor` オブジェクトは `save(path)` メソッドでスケーラー設定とともに保存できます。
+推論時には `Preprocessor.load(path)` で復元し、同じ前処理を適用します。
+
