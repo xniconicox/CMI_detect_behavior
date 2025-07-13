@@ -88,6 +88,8 @@ CMI_comp/
 
 ## 🔧 前処理の詳細
 
+生成される pickle ファイルの一覧と利用方法は [doc/preprocessing_outputs.md](doc/preprocessing_outputs.md) にまとめています。
+
 ### 1. データクリーニング
 
 - 欠損値の処理
