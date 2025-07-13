@@ -15,13 +15,13 @@ from .io_utils import CACHE_DIR, df_md5
 from pathlib import Path
 import yaml
 
-from .config_utils import load_config
 from .preprocessing import (
     create_sliding_windows_with_demographics,
     handedness_correction_v2,
     clean_sensor_missing_values,
     clean_missing_sensor_data_parallel_disk,
 )
+from .config_utils import load_config, get_cache_dir
 from .tof import tof_to_voxel_tensor
 from .feature_engineering import (
     compute_basic_statistics,
@@ -46,9 +46,10 @@ class WindowTensorBuilder:
             + self.config.get("sensor_thm_cols", [])
         )
         self.demographics_cols = self.config.get("demographics_cols", [])
-        self.cache_file = CACHE_DIR / "windows.pkl"
-        self.meta_file = CACHE_DIR / "windows_meta.json"
-        CACHE_DIR.mkdir(exist_ok=True)
+        self.cache_dir = get_cache_dir(self.config)
+        self.cache_file = self.cache_dir / "windows.pkl"
+        self.meta_file = self.cache_dir / "windows_meta.json"
+        self.cache_dir.mkdir(exist_ok=True)
 
     def build(self, df: pd.DataFrame, use_cache: bool = True):
         md5 = df_md5(df)
@@ -83,9 +84,10 @@ class TabularFeatureBuilder:
         self.sampling_rate = pp.get("sampling_rate", 50.0)
         self.fft_bands = pp.get("fft_bands", [])
         self.window_builder = WindowTensorBuilder(self.config)
-        self.cache_file = CACHE_DIR / "tabular_features.pkl"
-        self.meta_file = CACHE_DIR / "tabular_meta.json"
-        CACHE_DIR.mkdir(exist_ok=True)
+        self.cache_dir = get_cache_dir(self.config)
+        self.cache_file = self.cache_dir / "tabular_features.pkl"
+        self.meta_file = self.cache_dir / "tabular_meta.json"
+        self.cache_dir.mkdir(exist_ok=True)
 
     def build(self, df: pd.DataFrame, use_cache: bool = True):
         md5 = df_md5(df)
@@ -125,9 +127,10 @@ class ToFVoxelBuilder:
         h = pp.get("tof_height", 8)
         w = pp.get("tof_width", 8)
         self.tof_cols = [f"tof_{d}_v{i}" for d in range(1, depth + 1) for i in range(h * w)]
-        self.cache_file = CACHE_DIR / "tof_voxel.pkl"
-        self.meta_file = CACHE_DIR / "tof_meta.json"
-        CACHE_DIR.mkdir(exist_ok=True)
+        self.cache_dir = get_cache_dir(self.config)
+        self.cache_file = self.cache_dir / "tof_voxel.pkl"
+        self.meta_file = self.cache_dir / "tof_meta.json"
+        self.cache_dir.mkdir(exist_ok=True)
 
     def build(self, df: pd.DataFrame, use_cache: bool = True):
         md5 = df_md5(df)

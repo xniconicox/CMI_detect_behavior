@@ -13,3 +13,9 @@ def get_preprocessing_params():
     """Return preprocessing-related hyperparameters from config."""
     cfg = load_config()
     return cfg.get("preprocessing", {})
+
+
+def get_cache_dir(cfg: dict | None = None) -> Path:
+    """Return cache directory Path from config."""
+    cfg = cfg or load_config()
+    return Path(cfg.get("cache_dir", "cache"))
