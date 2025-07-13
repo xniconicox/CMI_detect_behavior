@@ -1,4 +1,5 @@
 data_dir: "data"
+cache_dir: "cache"
 output_dir: "output/experiments"
 
 # preprocessing hyperparameters
@@ -23,15 +24,30 @@ preprocessing:
   tof_width: 8
 
 
-sensor_cols:
+sensor_acc_cols:
   - acc_x
   - acc_y
   - acc_z
+
+sensor_rot_cols:
   - rot_w
   - rot_x
   - rot_y
   - rot_z
 
+sensor_thm_cols:
+  - thm_1
+  - thm_2
+  - thm_3
+  - thm_4
+  - thm_5
+
+sensor_tof_cols:
+  - tof_1_v0
+# ToFセンサー（5層×64ピクセル）
+# 例: tof_1_v0〜tof_5_v63
+# 下記はPythonで自動展開することを推奨
+# 例: [f"tof_{d}_v{i}" for d in range(1,6) for i in range(64)]
 
 demographics_cols:
   - adult_child

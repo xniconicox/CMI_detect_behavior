@@ -1,288 +1,286 @@
 """
 Preprocessing utilities for the CMI competition (commented version).
 
-Added **A–L** section headers that map directly to the design document
-(section 4‑2) so you can quickly trace which function produces which
-feature block.
 """
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from scipy.signal import find_peaks
-
-# ============================================================
-# A. 基本統計量 (mean / std / range / RMS / energy)
-# ============================================================
-### --- Block A Summary ---------------------------------------
-# dims: 56 | 推奨モデル: LightGBM_all / non
-# 広域量的特徴――窓全体の強度・分布を圧縮
-# ------------------------------------------------------------
-def compute_basic_statistics(X_windows: np.ndarray) -> np.ndarray:
-    """Compute Block F statistics per window."""
-    means  = X_windows.mean(axis=1)
-    stds   = X_windows.std(axis=1)
-    ranges = X_windows.max(axis=1) - X_windows.min(axis=1)
-    rms    = np.sqrt((X_windows ** 2).mean(axis=1))
-    energy = (X_windows ** 2).sum(axis=1)
-    if X_windows.shape[2] >= 3:
-        mag = np.linalg.norm(X_windows[:, :, :3], axis=2)
-        mag_mean = mag.mean(axis=1, keepdims=True)
-        mag_std  = mag.std(axis=1, keepdims=True)
-        return np.hstack([means, stds, ranges, rms, energy, mag_mean, mag_std])
-    return np.hstack([means, stds, ranges, rms, energy])
 
 
 # ============================================================
-# B. ピーク & 周期特徴量
+# L. 利き手反転正規化 (Y/Z flip for left‑handed)
 # ============================================================
-### --- Block B Summary ---------------------------------------
-# dims: 18 | 推奨モデル: LightGBM_all / non
-# BFRB の “反復性” をカウントして数値化
-# ------------------------------------------------------------
+from typing import Sequence
 
-def extract_peak_features(window: np.ndarray) -> np.ndarray:
-    """Return per‑axis peak counts (Block D)."""
-    return np.array([len(find_peaks(window[:, i])[0]) for i in range(window.shape[1])], dtype=np.float32)
-
-
-def compute_peak_features(X_windows: np.ndarray) -> np.ndarray:
-    """Block D wrapper for many windows."""
-    return np.vstack([extract_peak_features(w) for w in X_windows])
-
-# ============================================================
-# C. 正規化ユーティリティ (sensor / tabular)
-# ============================================================
-
-def normalize_sensor_data(X: np.ndarray):
-    """Block C‑1: z‑score normalisation for sensor windows."""
-    scaler = StandardScaler()
-    n, t, f = X.shape
-    X_flat = np.nan_to_num(X.reshape(-1, f), nan=0.0)
-    X_norm = scaler.fit_transform(X_flat).reshape(n, t, f)
-    return X_norm, scaler
-
-
-def normalize_tabular_data(X: np.ndarray):
-    """Block C‑2: z‑score normalisation for demographics/tabular."""
-    scaler = StandardScaler()
-    return scaler.fit_transform(X), scaler
-
-# ============================================================
-# C. FFT バンドエネルギー (0.5–20 Hz)
-# ============================================================
-### --- Block C Summary ---------------------------------------
-# dims: 10 | 推奨モデル: LightGBM_all / non
-# 動作リズム・速度の周波数分布
-# ------------------------------------------------------------
-
-def compute_fft_band_energy(X_windows: np.ndarray, fs: float = 50.0, bands=None) -> np.ndarray:
-    """Compute block G FFT band energies."""
-    if bands is None:
-        bands = [(0.5, 2), (2, 5), (5, 10), (10, 20)]
-    n_win, win_len, n_feat = X_windows.shape
-    freqs = np.fft.rfftfreq(win_len, d=1.0 / fs)
-    power = np.abs(np.fft.rfft(X_windows, axis=1)) ** 2
-    energies = []
-    for lo, hi in bands:
-        mask = (freqs >= lo) & (freqs < hi)
-        energies.append(power[:, mask, :].sum(axis=1))
-    return np.concatenate(energies, axis=1)
-
-# ============================================================
-# D. ワールド線形加速度 & IMU World-Frame 変換
-# ============================================================
-### --- Block D Summary ---------------------------------------
-# dims: 21 | 推奨モデル: LightGBM_all / CNN-GRU
-# 姿勢成分を除去した「純粋な動き」ベクトル
-# ------------------------------------------------------------
-def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
-    """Convert quaternion **q = [w, x, y, z]** to its 3×3 rotation matrix.
-
-    Part of **Block A** in the feature table (IMU world transformation).
-    """
-    w, x, y, z = q
-    return np.array([
-        [1 - 2 * (y ** 2 + z ** 2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x ** 2 + z ** 2), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x ** 2 + y ** 2)],
-    ])
-
-
-# def rotate_acceleration(acc: np.ndarray, quat: np.ndarray) -> np.ndarray:
-#     """Rotate raw accelerometer vector into the world frame (Block A)."""
-#     return quaternion_to_rotation_matrix(quat) @ acc
-
-
-# def linear_acceleration(acc: np.ndarray, quat: np.ndarray, gravity: float = 9.81) -> np.ndarray:
-#     """Remove gravity after rotation, yielding linear acceleration (Block A)."""
-#     acc_world = rotate_acceleration(acc, quat)
-#     gravity_vec = np.array([0, 0, gravity])
-#     return acc_world - gravity_vec
-# セルD-1：IMU をワールド座標系に変換＋線形加速度算出を並列＆ディスクキャッシュで実装
-import tempfile, shutil, uuid, gc
-from pathlib import Path
-from joblib import Parallel, delayed
-from tqdm.auto import tqdm
-import pandas as pd, numpy as np
-
-def _world_transform_and_dump(
-    seq_df: pd.DataFrame,
-    time_col: str,
-    tmp_dir: str,
-) -> str:
-    """シーケンス毎に world-frame 変換＋線形加速度を計算して Parquet 出力"""
-    seg = seq_df.sort_values(time_col).copy()
-    accs = seg[['acc_x','acc_y','acc_z']].to_numpy()
-    quats = seg[['rot_w','rot_x','rot_y','rot_z']].to_numpy()
-
-    # 結果用配列
-    acc_w    = np.empty_like(accs)
-    lin_acc  = np.empty_like(accs)
-    g_vec    = np.array([0,0,9.81])
-
-    # 各行を変換
-    for i, (acc, q) in enumerate(zip(accs, quats)):
-        R = quaternion_to_rotation_matrix(q)
-        aw = R @ acc
-        acc_w[i]   = aw
-        lin_acc[i] = aw - g_vec
-
-    # DataFrame に列追加
-    seg[['acc_w_x','acc_w_y','acc_w_z']] = acc_w
-    seg[['lin_acc_x','lin_acc_y','lin_acc_z']] = lin_acc
-
-    # Parquet 出力
-    fname = f"seq_{seq_df['sequence_id'].iloc[0]}_{uuid.uuid4().hex}.parquet"
-    out_path = Path(tmp_dir) / fname
-    seg.to_parquet(out_path, compression='zstd')
-
-    # メモリ解放
-    del seg, accs, quats, acc_w, lin_acc
-    gc.collect()
-    return str(out_path)
-
-# セルD-1：IMU→World変換＆線形加速度を subject 単位で処理＋キャッシュ
-import tempfile, shutil, os, gc
-from pathlib import Path
-import pandas as pd, numpy as np
-from tqdm.auto import tqdm
-def transform_world_frame_by_subject(
+def handedness_correction_v2(
     df: pd.DataFrame,
-    cache_path: Path,
-    group_col: str = "subject",
-    time_col: str = "sequence_counter",
-    tmp_parent: str = "tmp_world_subj",
-    keep_tmp: bool = False,
+    *,
+    imu_prefixes: Sequence[str] = ("acc", "gyro", "rot", "mag"),
+    apply_tof_mirror: bool = True,
 ) -> pd.DataFrame:
     """
-    subject ごとに IMU をワールド座標系に変換 & 重力除去 → Parquet キャッシュ保存
+    左利き (handedness==0) サンプルを右利き座標系に正規化する。
+
+    1. IMU (acc/gyro/rot/mag) の Y・Z 軸を符号反転
+       - rot_w は反転しない
+    2. ToF センサは左右ピクセルを鏡像ミラー (値はそのまま)
+       - 値の符号反転は行わない
     """
-    # ソート＆コピー
-    df = df.sort_values([group_col, "sequence_id", time_col]).copy()
+    df = df.copy()
+    left = df["handedness"] == 0
 
-    # 一時ディレクトリ
-    tmp_root = Path(tmp_parent); tmp_root.mkdir(exist_ok=True)
-    parts = []
+    # --- 1) IMU の Y/Z 反転 ------------------------------------------
+    axis_sign = {"x": 1, "y": -1, "z": -1, "w": 1}       # rot_w は 1
+    for pre in imu_prefixes:
+        axes = ("w", "x", "y", "z") if pre == "rot" else ("x", "y", "z")
+        for ax in axes:
+            col = f"{pre}_{ax}"
+            if col in df.columns:
+                df.loc[left, col] *= axis_sign[ax]
 
-    # subject ごとにループ
-    for subj, sub_df in tqdm(df.groupby(group_col, sort=True),
-                             desc="subject", unit="sub"):
-        acc_arr  = sub_df[['acc_x','acc_y','acc_z']].to_numpy()
-        quat_arr = sub_df[['rot_w','rot_x','rot_y','rot_z']].to_numpy()
+    # --- 2) ToF 水平ミラー -------------------------------------------
+    if apply_tof_mirror:
+        tof_cols = [c for c in df.columns if c.startswith("tof_")]
+        if tof_cols:  # mirror_tof_rows は既存関数を流用
+            df.loc[left, tof_cols] = mirror_tof_rows(df.loc[left, :], tof_cols)
 
-        # 結果配列
-        acc_w = np.empty_like(acc_arr)
-        lin   = np.empty_like(acc_arr)
-        g_vec = np.array([0,0,9.81])
-
-        # 各フレームを変換
-        for i in range(len(sub_df)):
-            R = quaternion_to_rotation_matrix(quat_arr[i])
-            aw = R.dot(acc_arr[i])
-            acc_w[i] = aw
-            lin[i]   = aw - g_vec
-
-        # 列を追加
-        sub_df[['acc_w_x','acc_w_y','acc_w_z']]   = acc_w
-        sub_df[['lin_acc_x','lin_acc_y','lin_acc_z']] = lin
-
-        # Parquet 出力
-        out_path = tmp_root / f"subject_{subj}.parquet"
-        sub_df.to_parquet(out_path, compression="zstd")
-        parts.append(out_path)
-
-        # メモリ解放
-        del sub_df, acc_arr, quat_arr, acc_w, lin
-        gc.collect()
-
-    # すべて読み込み＆結合
-    world_df = pd.concat(
-        (pd.read_parquet(p) for p in tqdm(parts, desc="concat", unit="file")),
-        ignore_index=True
-    )
-
-    # 一時ディレクトリ削除
-    if not keep_tmp:
-        shutil.rmtree(tmp_root, ignore_errors=True)
-
-    # キャッシュ保存
-    world_df.to_parquet(cache_path, compression="zstd")
-    return world_df
-
-
-
-# ============================================================
-# E. 欠損フラグ (missing sensor flags)
-# ============================================================
-### --- Block E Summary ---------------------------------------
-# dims: 3 | 推奨モデル: すべて
-# 未接続センサを one-hot で明示
-# ------------------------------------------------------------
-def add_missing_sensor_flags(df: pd.DataFrame, sensor_groups: dict) -> pd.DataFrame:
-    """Add boolean missing‑sensor flags per group (Block E)."""
-    for flag, cols in sensor_groups.items():
-        df[flag] = df[cols].isna().all(axis=1)
     return df
 
-# ============================================================
-# G. TDA Stats (Persistence Image)
-# ============================================================
-### --- Block G Summary ---------------------------------------
-# dims: 8 | 推奨モデル: CNN-GRU concat / LightGBM
-# 位相的周期性を独自にエンコード
-# ------------------------------------------------------------
-def compute_persistence_image_features(X_windows: np.ndarray, dimension:int=1, n_bins:int=20, sigma:float=0.1) -> np.ndarray:
-    """Block J: persistence image features via giotto‑tda."""
-    from gtda.time_series import TakensEmbedding
-    from gtda.homology import VietorisRipsPersistence
-    from gtda.diagrams import PersistenceImage
 
-    emb = TakensEmbedding(time_delay=1, dimension=dimension)
-    vrp = VietorisRipsPersistence(homology_dimensions=[0, 1])
-    pim = PersistenceImage(bandwidth=sigma, n_bins=(n_bins, n_bins))
-    feats = []
-    for w in X_windows:
-        e = emb.fit_transform(w)
-        d = vrp.fit_transform(e[np.newaxis, ...])
-        img = pim.fit_transform(d)
-        feats.append(img.reshape(-1))
-    return np.array(feats, dtype=np.float32)
+import re
+# ── 1. ToF の水平ミラー（左右反転）関数 ─────────────────────────
+def mirror_tof_rows(df: pd.DataFrame, tof_cols: list[str]) -> pd.DataFrame:
+    """
+    各行の ToF ピクセル(8×8) を水平ミラーします。
+    df[tof_cols] の形状は (N, 64×D) を想定。
+    """
+    pattern = re.compile(r"tof_(\d+)_v(\d+)")
+    # センサIDごとのグループを取得
+    sensor_ids = sorted({int(pattern.match(c).group(1)) for c in tof_cols})
+    out = df.copy()
+    for sid in sensor_ids:
+        # 当該センサの 64 列を時系列順に並べて (N, H, W) にreshape
+        cols = [f"tof_{sid}_v{i}" for i in range(64)]
+        arr = df[cols].to_numpy().reshape(-1, 8, 8)
+        # W方向を反転
+        flipped = arr[:, :, ::-1]
+        # 元に戻して DataFrame に代入
+        out.loc[:, cols] = flipped.reshape(-1, 64)
+    return out
 
 
 # ============================================================
-# H. Auto-Encoder 再構成誤差
-# ============================================================
-### --- Block H Summary ---------------------------------------
-# dims: 4 | 推奨モデル: LightGBM / Binary-GRU (aux)
-# 異常度スコアで BFRB 境界を補強
-# ------------------------------------------------------------
+# Utility : Missing-value Cleaning
+# =============================
 
-def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np.ndarray:
-    """Block K: per‑window MSE reconstruction error from a trained AE."""
-    recon = model.predict(X_windows, verbose=0)
-    return ((X_windows - recon) ** 2).mean(axis=(1, 2), keepdims=True)
+# =========================================================
+# D) センサータイプごとに欠損値を適切に処理する関数
+# =========================================================
 
+def clean_sensor_missing_values(
+    df: pd.DataFrame,
+    sensor_type_groups: dict,
+    acc_clip: tuple = (-40.0, 40.0),
+) -> pd.DataFrame:
+    """
+    センサータイプごとに欠損値を適切に処理する関数（調査結果に基づく）
+    
+    ── Rules (調査結果ベース) ────────────────────────────────
+      • Accelerometer :   0 / −1 は正当値 → 極端値 |value|>acc_clip を NaN
+      • Rotation      :   NaN のみ欠損値
+      • ToF_Sensor    :   NaN, -1 および -1 未満 → 欠損値 (NaN 化)
+      • Thermal       :   NaN のみ欠損値
+    ─────────────────────────────────────────────────────────
+    """
+    df = df.copy()
+
+    # ------------------ 1) Accelerometer ------------------
+    acc_cols = sensor_type_groups.get("Accelerometer", [])
+    if acc_cols:
+        # |value| > clip 上限を欠測とみなす
+        df[acc_cols] = df[acc_cols].where(
+            df[acc_cols].abs().le(acc_clip[1]), np.nan
+        )
+
+    # ------------------ 2) ToF_Sensor ---------------------
+    tof_cols = sensor_type_groups.get("ToF_Sensor", [])
+    if tof_cols:
+        # a) 上限超え (255 以上) は NaN
+        df[tof_cols] = df[tof_cols].where(df[tof_cols] <= 254, np.nan)
+        # b) -2 以下も NaN （ハードエラー）
+        df[tof_cols] = df[tof_cols].where(df[tof_cols] >= -1, np.nan)
+        # ※ -1 は “反射なし” → そのまま残す
+
+    # ------------------ 3) Rotation / Thermal -------------
+    # 既定では NaN のみ欠測 → 追加処理不要
+    return df
+
+
+# =========================================================
+# A) 補間パラメータ（調査結果を反映）
+# =========================================================
+# 外部ファイルで定義
+
+# =========================================================
+# B) クォータニオン SLERP と ToF 用補間関数
+# =========================================================
+from scipy.spatial.transform import Rotation, Slerp
+import numpy as np
+import pandas as pd
+
+def _interpolate_quaternion_block(df, cols, time_col, limit):
+    q = df[cols].to_numpy(float)
+
+    # 0-norm → 欠測扱い
+    norm = np.linalg.norm(q, axis=1, keepdims=True)
+    q[norm.squeeze() < 1e-6] = np.nan
+
+    t = df[time_col].to_numpy()
+    mask_nan = np.isnan(q).any(axis=1)
+
+    i = 0
+    while i < len(q):
+        if mask_nan[i]:
+            # --- 欠測 run の [start+1 : end-1] を補間 -----------------
+            start = i - 1               # start は常に定義される
+            j = i
+            while j < len(q) and mask_nan[j]:
+                j += 1
+            end = j                      # first non-NaN idx or len(q)
+            run_len = end - start - 1
+            if start >= 0 and end < len(q) and run_len <= limit:
+                key_times = np.array([t[start], t[end]])
+                key_rots  = Rotation.from_quat(q[[start, end]])
+                slerp = Slerp(key_times, key_rots)
+                q[start+1:end] = slerp(t[start+1:end]).as_quat()
+            i = end                      # ← 欠測 run の次フレームへ
+        else:
+            i += 1                       # 欠測でない→次へ
+
+    # 補間後に正規化
+    valid = ~np.isnan(q).any(axis=1)
+    q[valid] /= np.linalg.norm(q[valid], axis=1, keepdims=True)
+    # まだ NaN があれば identity に
+    q[~valid] = np.array([1,0,0,0])
+
+    return pd.DataFrame(q, columns=cols, index=df.index)
+
+
+
+def _interpolate_tof_block(df, cols, limit, fill_value=-1):
+    """-1 は反射なし → 一時 NaN → 短ラン補間 → -1 に戻す"""
+    blk = df[cols].replace(fill_value, np.nan)
+    blk = blk.interpolate(method="linear",
+                          limit=limit,
+                          limit_direction="both")
+    return blk.fillna(fill_value)
+
+# =========================================================
+# C) 並列 & ディスク結合版クリーニング
+# =========================================================
+from joblib import Parallel, delayed
+from tqdm.auto import tqdm
+import tempfile, shutil
+from pathlib import Path
+
+def clean_missing_sensor_data_parallel_disk(
+    df: pd.DataFrame,
+    sensor_type_groups: dict[str, list[str]],
+    group_cols=("subject", "sequence_id"),
+    time_col: str = "sequence_counter",
+    interp_params: dict | None = None,
+    n_jobs: int = -1,
+    tmp_parent: str | Path = "/tmp/tmp_clean_chunks",
+    keep_tmp: bool = False,
+    keep_cols: list[str] | None = None,        # ★NEW
+) -> pd.DataFrame:
+
+    keep_cols = list(keep_cols or [])
+    base_cols = list(group_cols) + [time_col] + keep_cols
+    
+    # 0) デフォルト
+    default_params = {
+        "Accelerometer": {"method": "linear", "limit": 3},
+        "Rotation":      {"method": "slerp",  "limit": 120},
+        "ToF_Sensor":    {"method": "linear", "limit": 4, "fill_value": -1},
+        "Thermal":       {"method": "linear", "limit": 120},
+    }
+    interp_params = interp_params or default_params
+
+    # 1) ソート
+    df = df.sort_values(list(group_cols) + [time_col]).copy()
+
+    # 2) 一時ディレクトリ
+    tmp_root = Path(tmp_parent); tmp_root.mkdir(exist_ok=True)
+    tmp_dir = tempfile.mkdtemp(dir=tmp_root)
+
+    # 3) 各グループを並列補間 → parquet 保存
+    def _interpolate_and_dump(key, g,
+                            sensor_type_groups, interp_params,
+                            time_col, tmp_dir):
+
+        # --- 欠測補間 -------------------------------------------------
+        for s_type, cols in sensor_type_groups.items():
+            params = interp_params[s_type]
+            method = params.get("method")
+            limit  = params.get("limit", 3)
+
+            if method is None:
+                continue
+            if s_type == "Rotation":
+                g[cols] = _interpolate_quaternion_block(
+                    g, cols, time_col, limit)
+            elif s_type == "ToF_Sensor":
+                g[cols] = _interpolate_tof_block(
+                    g, cols, limit, params.get("fill_value", -1))
+            else:  # Accelerometer / Thermal
+                g[cols] = g[cols].interpolate(
+                    method=method,
+                    limit=limit,
+                    limit_direction="both"
+                )
+        # -------------------------------------------------------------
+
+        # Parquet 出力
+        subject, seq_id = key
+        # ❶ 保存したい列を計算
+        save_cols = list(dict.fromkeys(
+            base_cols + sum(sensor_type_groups.values(), [])))
+
+        # ❷ サブセットを取ってから Parquet 書き出し
+        out_path = Path(tmp_dir) / f"{subject}_{seq_id}.parquet"
+        g.loc[:, save_cols].to_parquet(out_path)   # ← columns 引数を削除
+        return out_path
+
+    # ① (key, grp) を保持
+    groups = [(key, grp) for key, grp in df.groupby(list(group_cols), sort=False)]
+
+    # ② key を _interpolate_and_dump に渡す
+    paths = Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(_interpolate_and_dump)(
+            key, grp,              # ← 変更
+            sensor_type_groups,
+            interp_params,
+            time_col,
+            tmp_dir
+        )
+        for key, grp in tqdm(groups, desc="interp", unit="seq")
+    )
+    # 4) 結合
+    cleaned = pd.concat(
+        (pd.read_parquet(p) for p in tqdm(paths, desc="concat")),
+        ignore_index=True          # ← sort_index 不要に
+    )
+
+    if not keep_tmp:
+        # 削除はバックグラウンドでも可
+        import threading, shutil
+        threading.Thread(target=shutil.rmtree,
+                        args=(tmp_dir,),
+                        kwargs=dict(ignore_errors=True),
+                        daemon=True).start()
+
+    return cleaned 
 
 # ============================================================
 # I. 合成 Tabular (= A–H)
@@ -292,6 +290,7 @@ def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np
 # 木モデル用に Tabular 特徴を統合
 # ------------------------------------------------------------
 # （統合処理は学習パイプライン側で実施）
+
 
 # ============================================================
 # J. IMU Sliding Window Tensor
@@ -338,6 +337,9 @@ def create_sliding_windows_with_demographics(
     )
 
 
+
+
+
 # ============================================================
 # K. ToF 3D Voxel Tensor
 # ============================================================
@@ -368,285 +370,21 @@ def tof_to_voxel_tensor(df: pd.DataFrame, fill_value: float = 0.0, prefix: str =
                 tensor[:, d, r, c] = vals
     return tensor
 
-# ============================================================
-# L. 利き手反転正規化 (Y/Z flip for left‑handed)
-# ============================================================
-
-def handedness_correction(df):
-    df = df.copy()
-    left = df['handedness']==0
-    # 加速度・ジャイロの Y/Z 軸反転
-    for col in ['acc_y','acc_z','rot_y','rot_z']:
-        df.loc[left, col] *= -1
-    # ToF センサー X 軸反転 (例)
-    for col in df.columns:
-        if col.startswith('tof_') and col.endswith('_x'):
-            df.loc[left, col] *= -1
-    return df
-# セル1：利き手補正 v2 定義
-def handedness_correction_v2(df):
-    """
-    左利き(subject: handedness==0) に対し、
-    ・加速度(acc_*), ジャイロ(gyro_*), 回転(rot_*) の Y/Z 軸を反転
-    ・磁力計(mag_*) があれば同様に反転
-    ・ToF 全チャンネルを反転（必要に応じて調整）
-    """
-    df = df.copy()
-    left = df['handedness'] == 0
-
-    # IMU 系センサー
-    sensors = {
-        'acc': ['x','y','z'],
-        'gyro': ['x','y','z'],
-        'rot':  ['w','x','y','z'],
-        'mag':  ['x','y','z'],
-    }
-    for sensor, axes in sensors.items():
-        for axis in axes:
-            col = f"{sensor}_{axis}"
-            if col in df.columns:
-                # X/W 軸はそのまま、Y/Z 軸は符号反転
-                factor = -1 if axis in ['y','z'] else 1
-                df.loc[left, col] *= factor
-
-    # ToF センサー全チャンネル反転
-    for col in df.columns:
-        if col.startswith('tof_'):
-            df.loc[left, col] *= -1
-
-    return df
 
 # ============================================================
-# M. Wavelet 周波数特徴 (DWT energies)
+# C. 正規化ユーティリティ (sensor / tabular)
 # ============================================================
 
-def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level: int = 3) -> np.ndarray:
-    """Block I: discrete wavelet band energies using PyWavelets."""
-    import pywt
-    feats = []
-    for w in X_windows:
-        ax_feats = []
-        for i in range(w.shape[1]):
-            coeffs = pywt.wavedec(w[:, i], wavelet=wavelet, level=level)
-            ax_feats += [np.sum(c ** 2) for c in coeffs]
-        feats.append(ax_feats)
-    return np.array(feats, dtype=np.float32)
+def normalize_sensor_data(X: np.ndarray):
+    """Block C‑1: z‑score normalisation for sensor windows."""
+    scaler = StandardScaler()
+    n, t, f = X.shape
+    X_flat = np.nan_to_num(X.reshape(-1, f), nan=0.0)
+    X_norm = scaler.fit_transform(X_flat).reshape(n, t, f)
+    return X_norm, scaler
 
 
-# ============================================================
-# Utility : Missing-value Cleaning
-# =============================
-
-def clean_missing_sensor_data(
-    df: pd.DataFrame,
-    sensor_cols: list,
-    group_cols: tuple | list = ("subject", "sequence_id"),
-    time_col: str = "timestamp",
-    short_gap: int = 5,
-) -> pd.DataFrame:
-    """Fill missing sensor values using interpolation and ffill/bfill.
-
-    Short gaps of up to ``short_gap`` consecutive NaNs are linearly interpolated
-    for each sequence.  Longer gaps are filled with forward/backward fill.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Raw dataframe containing sensor readings.
-    sensor_cols : list
-        Columns corresponding to sensor values.
-    group_cols : tuple | list, optional
-        Columns that define a sequence (default is ("subject", "sequence_id")).
-    time_col : str, optional
-        Timestamp column used to sort values before interpolation.
-    short_gap : int, optional
-        Maximum length of gap to interpolate linearly.
-
-    Returns
-    -------
-    pd.DataFrame
-        Dataframe with missing values filled.
-    """
-
-    df = df.sort_values(list(group_cols) + [time_col]).copy()
-    df[sensor_cols] = df[sensor_cols].replace(-1, np.nan)
-
-    grouped = df.groupby(list(group_cols))
-    for _, idx in grouped.groups.items():
-        segment = df.loc[idx, sensor_cols]
-        segment = segment.interpolate(
-            method="linear",
-            limit=short_gap,
-            limit_direction="both",
-        )
-        segment = segment.ffill().bfill()
-        df.loc[idx, sensor_cols] = segment
-
-    return df
-
-# セル：前処理関数をセンサー種別ごとに最適化
-import tempfile, shutil, uuid, os
-from pathlib import Path
-from joblib import Parallel, delayed
-from tqdm.auto import tqdm
-import pandas as pd, numpy as np
-import gc
-# Optional: quaternion補間にSLERPを使う場合
-# from scipy.spatial.transform import Rotation, Slerp
-
-def _interpolate_and_dump(
-    seq_df: pd.DataFrame,
-    sensor_type_groups: dict,
-    interp_params: dict,
-    time_col: str,
-    tmp_dir: str,
-) -> str:
-    seg = seq_df.sort_values(time_col).copy()
-
-    # --- ToF: -1→NaN  (Accelerometer の -1/0 は別関数で対処済とする) ---
-    tof_cols = sensor_type_groups.get("ToF_Sensor", [])
-    if tof_cols:
-        seg[tof_cols] = seg[tof_cols].replace(-1, np.nan)
-
-    # --- 各センサー種別ごとに補間処理 ----------
-    for sensor_type, cols in sensor_type_groups.items():
-        params = interp_params[sensor_type]
-        if sensor_type == "Accelerometer":
-            # 線形補間のみ、limitフレームまで
-            seg[cols] = seg[cols].interpolate(
-                limit=params["limit"],
-                limit_direction="both",
-                method="linear"
-            )
-            # 端点は埋めず NaN のまま
-        elif sensor_type == "Rotation":
-            # 現状は線形補間で代用（要SLERPアップデート）
-            seg[cols] = seg[cols].interpolate(
-                limit=params["limit"],
-                limit_direction="both",
-                method="linear"
-            )
-        elif sensor_type == "ToF_Sensor":
-            if params.get("method") == "linear":
-                seg[cols] = seg[cols].interpolate(
-                    limit=params["limit"],
-                    limit_direction="both",
-                    method="linear"
-                )
-            # 長い欠損は 0 埋め
-            seg[cols] = seg[cols].fillna(params["fill_value"])
-        elif sensor_type == "Thermal":
-            seg[cols] = (
-                seg[cols]
-                .interpolate(limit=params["limit"], limit_direction="both", method="linear")
-                .ffill()
-                .bfill()
-            )
-
-    # --- ファイル出力 ---
-    fname = f"seq_{seq_df['sequence_id'].iloc[0]}_{uuid.uuid4().hex}.parquet"
-    out_path = Path(tmp_dir) / fname
-    seg.to_parquet(out_path, compression="zstd")
-
-    # メモリ開放
-    del seg; gc.collect()
-    return str(out_path)
-
-
-def clean_missing_sensor_data_parallel_disk(
-    df: pd.DataFrame,
-    sensor_type_groups: dict,
-    group_cols=("subject", "sequence_id"),
-    time_col: str = "sequence_counter",
-    interp_params: dict | None = None,
-    n_jobs: int = -1,
-    tmp_parent: str | Path = "tmp_clean_chunks",
-    keep_tmp: bool = False,
-) -> pd.DataFrame:
-    """
-    センサー種別ごとの補間ルールを適用して並列処理＋ディスク結合。
-    sensor_type_groups: {
-      "Accelerometer": [...],
-      "Rotation": [...],
-      "ToF_Sensor": [...],
-      "Thermal": [...],
-    }
-    interp_params: 各種別ごとの dict、例は下記デフォルト参照
-    """
-    # デフォルトパラメータ
-    default_params = {
-        "Accelerometer": {"limit": 3},
-        "Rotation":      {"limit": 2},
-        "ToF_Sensor":    {"method": None,   "limit": 2, "fill_value": 0},
-        "Thermal":       {"limit": 5},
-    }
-    if interp_params is None:
-        interp_params = default_params
-
-    # ソート & コピー
-    df = df.sort_values(list(group_cols) + [time_col]).copy()
-
-    # --- 一時ディレクトリ準備 ---
-    tmp_root = Path(tmp_parent)
-    tmp_root.mkdir(exist_ok=True)
-    tmp_dir = tempfile.mkdtemp(dir=tmp_root)
-
-    # --- グループ化して並列実行 ---
-    groups = [g for _, g in df.groupby(list(group_cols), sort=False)]
-    paths = Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(_interpolate_and_dump)(
-            g,
-            sensor_type_groups,
-            interp_params,
-            time_col,
-            tmp_dir
-        )
-        for g in tqdm(groups, desc="interp", unit="seq")
-    )
-
-    # --- 結合 & クリーンアップ ---
-    cleaned = pd.concat(pd.read_parquet(p) for p in tqdm(paths, desc="concat"))
-    cleaned = cleaned.sort_index().reset_index(drop=True)
-    if not keep_tmp:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    return cleaned
-
-
-def clean_sensor_missing_values(
-    df: pd.DataFrame,
-    sensor_type_groups: dict,
-    acc_clip: tuple = (-40.0, 40.0),
-) -> pd.DataFrame:
-    """
-    センサータイプごに欠損値を適切に処理する関数（調査結果に基づく）
-    
-    ── Rules (調査結果ベース) ────────────────────────────────
-      • Accelerometer :   0 / −1 は正当値 → NaN 化しない  
-                          極端値 |value| > acc_clip → NaN
-      • Rotation      :   NaN のみ欠損値
-      • ToF_Sensor    :   NaN, -1 → 欠損値
-      • Thermal       :   NaN のみ欠損値
-    ─────────────────────────────────────────────────────────
-    """
-    df = df.copy()
-
-    # --- Accelerometer: -1と0をNaN化 --------------------------------
-    acc_cols = sensor_type_groups.get("Accelerometer", [])
-    if acc_cols:
-        df[acc_cols] = df[acc_cols].where(
-            df[acc_cols].abs().le(acc_clip[1]),  # clip both sides
-            np.nan
-        )
-
-    # --- ToF_Sensor: -1をNaN化 -------------------------------------
-    tof_cols = sensor_type_groups.get("ToF_Sensor", [])
-    if tof_cols:
-        for col in tof_cols:
-            df.loc[df[col] == -1, col] = np.nan
-
-    # --- Rotation, Thermal: NaNのみ → 変更なし ----------------------
-    # 何も処理しない
-
-    return df
-
+def normalize_tabular_data(X: np.ndarray):
+    """Block C‑2: z‑score normalisation for demographics/tabular."""
+    scaler = StandardScaler()
+    return scaler.fit_transform(X), scaler
