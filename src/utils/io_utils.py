@@ -2,6 +2,12 @@
 from pathlib import Path
 import pandas as pd, json, hashlib
 
+
+def df_md5(df: pd.DataFrame) -> str:
+    """DataFrame から MD5 ハッシュを計算する"""
+    data = pd.util.hash_pandas_object(df, index=True).values
+    return hashlib.md5(data.tobytes()).hexdigest()
+
 CACHE_DIR   = Path("cache")
 TRAIN_PARQ  = CACHE_DIR / "train_clean.parquet"
 TEST_PARQ   = CACHE_DIR / "test_clean.parquet"
