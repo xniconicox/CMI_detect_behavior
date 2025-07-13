@@ -6,8 +6,12 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras import layers, models
+try:
+    import tensorflow as tf
+    from tensorflow.keras import layers, models
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    tf = None
+    layers = models = None
 
 from src.utils.config_utils import load_config
 
@@ -27,6 +31,11 @@ class ToF3DCNNTrainer:
         pp = self.config.get("preprocessing", {})
         self.window_size = pp.get("window_size", 128)
         self.fill_value = pp.get("padding_value", 0.0)
+
+    def _require_tf(self) -> None:
+        """Ensure TensorFlow is available."""
+        if tf is None:
+            raise ImportError("TensorFlow is required for training the 3D CNN.")
 
     def load_data(self):
         """Load ToF windows and labels."""
@@ -61,6 +70,7 @@ class ToF3DCNNTrainer:
 
     def build_tof_3d_cnn(self, input_shape: tuple[int, int, int, int], num_classes: int) -> models.Model:
         """Build simple 3D CNN network."""
+        self._require_tf()
         inputs = layers.Input(shape=(input_shape[0], input_shape[2], input_shape[3], input_shape[1]))
         x = layers.Conv3D(16, (3, 3, 3), activation="relu", padding="same")(inputs)
         x = layers.MaxPool3D((2, 2, 2))(x)
@@ -75,6 +85,7 @@ class ToF3DCNNTrainer:
 
     def train(self, epochs: int = 20, batch_size: int = 32) -> Path:
         """Train model and save weights."""
+        self._require_tf()
         X, y = self.load_data()
         X = X.transpose(0, 1, 3, 4, 2)
         num_classes = int(np.max(y) + 1)
