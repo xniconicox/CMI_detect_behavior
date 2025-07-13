@@ -41,32 +41,15 @@ class ToF3DCNNTrainer:
 
     def load_data(self):
         """Load ToF windows and labels."""
-        tof_path = self.preprocessed_dir / "train_tof_voxel.pkl"
+        tof_path = self.preprocessed_dir / "train_tof_windows.pkl"
         label_path = self.preprocessed_dir / "train_labels.pkl"
-        info_path = self.preprocessed_dir / "train_info.pkl"
+
 
         with open(tof_path, "rb") as f:
-            tof_tensor = pickle.load(f)
+            windows = pickle.load(f)
         with open(label_path, "rb") as f:
             labels = pickle.load(f)
-        with open(info_path, "rb") as f:
-            info = pickle.load(f)
-
-        windows = []
-        for meta in info:
-            start = meta.get("start_idx", 0)
-            end = meta.get("end_idx", start + self.window_size)
-            window = tof_tensor[start:end]
-            if window.shape[0] < self.window_size:
-                pad = np.full(
-                    (self.window_size - window.shape[0],) + window.shape[1:],
-                    self.fill_value,
-                    dtype=np.float32,
-                )
-                window = np.concatenate([window, pad], axis=0)
-            windows.append(window)
-
-        X = np.stack(windows).astype(np.float32)
+        X = np.asarray(windows, dtype=np.float32)
         y = np.asarray(labels)
         return X, y
 
