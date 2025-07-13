@@ -13,10 +13,8 @@ from sklearn.preprocessing import StandardScaler
 from .io_utils import CACHE_DIR, df_md5
 
 from .config_utils import load_config
-from .preprocessing import (
-    create_sliding_windows_with_demographics,
-    tof_to_voxel_tensor,
-)
+from .preprocessing import create_sliding_windows_with_demographics
+from .tof import tof_to_voxel_tensor
 from .feature_engineering import (
     compute_basic_statistics,
     compute_peak_features,
