@@ -13,6 +13,7 @@ specified in the config file and saves processed data under
 
 from __future__ import annotations
 
+import sys
 import argparse
 from pathlib import Path
 from typing import Any
@@ -82,7 +83,19 @@ def main() -> None:
         logger.info("Loading train.csv and test.csv")
         train_df = pd.read_csv(data_dir / "train.csv")
         test_df = pd.read_csv(data_dir / "test.csv")
+        # Load main data
+        train_df = pd.read_csv(data_dir / "train.csv")
+        test_df = pd.read_csv(data_dir / "test.csv")
         logger.info("Fitting Preprocessor")
+        
+        # Load demographics data and merge
+        train_demo = pd.read_csv(data_dir / "train_demographics.csv")
+        test_demo = pd.read_csv(data_dir / "test_demographics.csv")
+        
+        # Merge demographics data
+        train_df = train_df.merge(train_demo, on="subject", how="left")
+        test_df = test_df.merge(test_demo, on="subject", how="left")
+        
         pp = Preprocessor(config)
         pp.fit(train_df, use_cache=args.use_cache)
         train_data = pp.transform(train_df, use_cache=args.use_cache)
@@ -96,9 +109,15 @@ def main() -> None:
         logger.info("Saved preprocessor to %s", pre_dir / "preprocessor.pkl")
 
     else:  # predict
+        # Load main data
         logger.info("Loading test.csv for prediction")
         df = pd.read_csv(data_dir / "test.csv")
         logger.info("Loading preprocessor from %s", pre_dir / "preprocessor.pkl")
+        
+        # Load demographics data and merge
+        test_demo = pd.read_csv(data_dir / "test_demographics.csv")
+        df = df.merge(test_demo, on="subject", how="left")
+        
         pp = Preprocessor.load(pre_dir / "preprocessor.pkl")
         data = pp.transform(df, use_cache=args.use_cache)
         save_dict(data, "predict", pre_dir)

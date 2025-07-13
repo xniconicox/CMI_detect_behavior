@@ -289,7 +289,9 @@ class Preprocessor:
                 processed, self.sensor_type_groups
             )
         if self.use_interp_cleaning:
-            keep = self.config.get("demographics_cols", []) + ["gesture"]
+            base_keep = self.config.get("demographics_cols", [])
+            # Only include columns that exist in the dataframe
+            keep = [col for col in base_keep + ["gesture"] if col in df.columns]
             processed = clean_missing_sensor_data_parallel_disk(
                 processed,
                 sensor_type_groups=self.sensor_type_groups,
@@ -300,21 +302,80 @@ class Preprocessor:
             processed = add_world_acc_features(processed)
         return processed
 
+    def _handle_missing_values_by_sensor_type(self, X_sensor: np.ndarray) -> np.ndarray:
+        """センサー別に適切な欠損値処理を行う"""
+        if X_sensor is None:
+            return X_sensor
+            
+        X_clean = X_sensor.copy()
+        
+        # センサー別の処理
+        sensor_config = self.config.get("sensor_cols", [])
+        acc_cols = self.config.get("sensor_acc_cols", [])
+        rot_cols = self.config.get("sensor_rot_cols", [])
+        thm_cols = self.config.get("sensor_thm_cols", [])
+        
+        # Accelerometer: 0で置換（物理的に正当）
+        if acc_cols:
+            acc_indices = [i for i, col in enumerate(sensor_config) if col in acc_cols]
+            for idx in acc_indices:
+                if idx < X_clean.shape[-1]:
+                    X_clean[..., idx] = np.nan_to_num(X_clean[..., idx], nan=0.0)
+        
+        # Rotation: 単位クォータニオンで置換
+        if rot_cols:
+            rot_indices = [i for i, col in enumerate(sensor_config) if col in rot_cols]
+            for i, idx in enumerate(rot_indices):
+                if idx < X_clean.shape[-1]:
+                    if i == 0:  # w成分
+                        X_clean[..., idx] = np.nan_to_num(X_clean[..., idx], nan=1.0)
+                    else:  # x, y, z成分
+                        X_clean[..., idx] = np.nan_to_num(X_clean[..., idx], nan=0.0)
+        
+        # Thermal: 前後の値で補間（簡易版）
+        if thm_cols:
+            thm_indices = [i for i, col in enumerate(sensor_config) if col in thm_cols]
+            for idx in thm_indices:
+                if idx < X_clean.shape[-1]:
+                    # 時系列方向で補間
+                    for window_idx in range(X_clean.shape[0]):
+                        series = X_clean[window_idx, :, idx]
+                        if np.isnan(series).any():
+                            # 前後の値で補間
+                            series_clean = np.nan_to_num(series, nan=np.nanmean(series))
+                            X_clean[window_idx, :, idx] = series_clean
+        
+        # その他のセンサー: 0で置換
+        all_processed_indices = set(acc_indices + rot_indices + thm_indices)
+        for i in range(X_clean.shape[-1]):
+            if i not in all_processed_indices:
+                X_clean[..., i] = np.nan_to_num(X_clean[..., i], nan=0.0)
+        
+        return X_clean
+
     def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, _, _ = windows
+        
+        # センサー別の適切な欠損値処理
+        X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
         logger.info(
             "Window tensor shape %s, demographics shape %s", X_sensor.shape, X_demo.shape
         )
-        self.sensor_scaler.fit(
-            np.nan_to_num(X_sensor.reshape(-1, X_sensor.shape[-1]), nan=0.0)
-        )
-        self.demo_scaler.fit(X_demo)
+        self.sensor_scaler.fit(X_sensor_clean.reshape(-1, X_sensor_clean.shape[-1]))
+        
+        # 人口統計データの正規化
+        X_demo_clean = np.nan_to_num(X_demo, nan=0.0)
+        self.demo_scaler.fit(X_demo_clean)
+        
+        # 表形式特徴量の正規化
         tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
-        self.tab_scaler.fit(tab)
+        tab_clean = np.nan_to_num(tab, nan=0.0)
+        self.tab_scaler.fit(tab_clean)
         logger.info("Tabular features shape %s", tab.shape)
+        
         self._fitted = True
         return self
 
@@ -325,13 +386,23 @@ class Preprocessor:
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, y, info = windows
+        
+        # センサー別の適切な欠損値処理
         logger.info("Window tensor shape %s", X_sensor.shape)
-        X_sensor = self.sensor_scaler.transform(
-            X_sensor.reshape(-1, X_sensor.shape[-1])
-        ).reshape(X_sensor.shape)
-        X_demo = self.demo_scaler.transform(X_demo)
+        X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
+        X_sensor_normalized = self.sensor_scaler.transform(
+            X_sensor_clean.reshape(-1, X_sensor_clean.shape[-1])
+        ).reshape(X_sensor_clean.shape)
+        
+        # 人口統計データの正規化
+        X_demo_clean = np.nan_to_num(X_demo, nan=0.0)
+        X_demo_normalized = self.demo_scaler.transform(X_demo_clean)
+        
+        # 表形式特徴量の正規化
         tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
-        tab = self.tab_scaler.transform(tab)
+        tab_clean = np.nan_to_num(tab, nan=0.0)
+        tab_normalized = self.tab_scaler.transform(tab_clean)
+        
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
         logger.info(
             "Output shapes: windows=%s, demographics=%s, tabular=%s, tof=%s",
@@ -341,9 +412,9 @@ class Preprocessor:
             tof_tensor.shape,
         )
         return {
-            "windows": X_sensor,
-            "demographics": X_demo,
-            "tabular": tab,
+            "windows": X_sensor_normalized,
+            "demographics": X_demo_normalized,
+            "tabular": tab_normalized,
             "tof_voxel": tof_tensor,
             "labels": y,
             "info": info,

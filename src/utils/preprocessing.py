@@ -308,7 +308,7 @@ def create_sliding_windows_with_demographics(
     min_sequence_length: int = 10,
     padding_value: float = 0.0,
 ):
-    """Block B: generate fixed‑length windows and attach static demographics."""
+    """Block B: generate fixed‑length windows and attach static demographics."""
     X_sensor_windows, X_demographics_windows, y_windows, info = [], [], [], []
 
     for (subject, seq_id), g in df.groupby(["subject", "sequence_id"]):
@@ -317,7 +317,15 @@ def create_sliding_windows_with_demographics(
             continue
         sensor = g[sensor_cols].values
         demo = g[demographics_cols].iloc[0].values
-        gesture = g["gesture"].iloc[0]
+        
+        # Handle case where gesture column doesn't exist (e.g., test data)
+        if "gesture" in g.columns:
+            gesture = g["gesture"].iloc[0]
+        else:
+            # For test data, we don't have gesture labels
+            # We'll use a placeholder value that won't affect the model training
+            gesture = -1  # Use -1 as placeholder for test data
+        
         need_pad = seq_len < window_size
         if need_pad:
             pad = np.full((window_size - seq_len, len(sensor_cols)), padding_value)
@@ -338,15 +346,6 @@ def create_sliding_windows_with_demographics(
 
 
 
-
-
-# ============================================================
-# K. ToF 3D Voxel Tensor
-# ============================================================
-### --- Block K Summary ---------------------------------------
-# dims: 20 480 | 推奨モデル: ToF-3D-CNN
-# 顔・対象物との空間的接近パターンを 3D で表現
-# ------------------------------------------------------------
 
 # ============================================================
 # C. 正規化ユーティリティ (sensor / tabular)
