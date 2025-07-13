@@ -86,6 +86,16 @@ CMI_comp/
 └── README.md              # このファイル
 ```
 
+## 🧪 テストの実行
+
+依存パッケージをインストール後、次のコマンドでユニットテストを実行できます。
+
+```bash
+pytest -q
+```
+
+詳細な説明は [doc/tests_usage.md](doc/tests_usage.md) を参照してください。
+
 ## 🔧 前処理の詳細
 
 生成される pickle ファイルの一覧と利用方法は [doc/preprocessing_outputs.md](doc/preprocessing_outputs.md) にまとめています。
