@@ -89,6 +89,7 @@ CMI_comp/
 ## 🔧 前処理の詳細
 
 生成される pickle ファイルの一覧と利用方法は [doc/preprocessing_outputs.md](doc/preprocessing_outputs.md) にまとめています。
+具体的なスクリプトの実行方法は [doc/preprocessing_usage.md](doc/preprocessing_usage.md) を参照してください。
 
 ### 1. データクリーニング
 
