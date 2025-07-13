@@ -25,7 +25,9 @@ class ToF3DCNNTrainer:
         self.preprocessed_dir = (
             Path(self.config["output_dir"]) / experiment_name / "preprocessed"
         )
-        self.models_dir = Path(self.config["output_dir"]) / experiment_name / "models"
+        self.models_dir = (
+            Path(self.config["output_dir"]) / experiment_name / "models"
+        )
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
         pp = self.config.get("preprocessing", {})
@@ -68,11 +70,26 @@ class ToF3DCNNTrainer:
         y = np.asarray(labels)
         return X, y
 
-    def build_tof_3d_cnn(self, input_shape: tuple[int, int, int, int], num_classes: int) -> models.Model:
+    def build_tof_3d_cnn(
+        self,
+        input_shape: tuple[int, int, int, int],
+        num_classes: int,
+    ) -> models.Model:
         """Build simple 3D CNN network."""
-        self._require_tf()
-        inputs = layers.Input(shape=(input_shape[0], input_shape[2], input_shape[3], input_shape[1]))
-        x = layers.Conv3D(16, (3, 3, 3), activation="relu", padding="same")(inputs)
+        inputs = layers.Input(
+            shape=(
+                input_shape[0],
+                input_shape[2],
+                input_shape[3],
+                input_shape[1],
+            )
+        )
+        x = layers.Conv3D(
+            16,
+            (3, 3, 3),
+            activation="relu",
+            padding="same",
+        )(inputs)
         x = layers.MaxPool3D((2, 2, 2))(x)
         x = layers.Conv3D(32, (3, 3, 3), activation="relu", padding="same")(x)
         x = layers.MaxPool3D((2, 2, 2))(x)
