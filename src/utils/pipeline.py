@@ -17,6 +17,7 @@ import yaml
 
 from .preprocessing import (
     create_sliding_windows_with_demographics,
+    create_tof_windows_with_info,
     handedness_correction_v2,
     clean_sensor_missing_values,
     clean_missing_sensor_data_parallel_disk,
@@ -226,6 +227,56 @@ class ToFVoxelBuilder:
         return result
 
 
+class ToFWindowBuilder:
+    """Create sliding windows from ToF voxel tensor."""
+
+    def __init__(self, config: dict | None = None) -> None:
+        self.config = config or load_config()
+        pp = self.config.get("preprocessing", {})
+        self.window_size = pp.get("window_size", 128)
+        self.stride = pp.get("stride", 64)
+        self.min_len = pp.get("min_sequence_length", 10)
+        self.fill_value = pp.get("padding_value", 0.0)
+        depth = pp.get("tof_depth", 5)
+        h = pp.get("tof_height", 8)
+        w = pp.get("tof_width", 8)
+        self.tof_cols = [f"tof_{d}_v{i}" for d in range(1, depth + 1) for i in range(h * w)]
+        self.cache_dir = get_cache_dir(self.config)
+        self.cache_file = self.cache_dir / "tof_windows.pkl"
+        self.meta_file = self.cache_dir / "tof_windows_meta.json"
+        self.cache_dir.mkdir(exist_ok=True)
+
+    def build(self, df: pd.DataFrame, use_cache: bool = True):
+        logger.info(
+            "Building ToF windows (size=%d, stride=%d, min_len=%d)",
+            self.window_size,
+            self.stride,
+            self.min_len,
+        )
+        md5 = df_md5(df)
+        if use_cache and self.cache_file.exists() and self.meta_file.exists():
+            meta = json.loads(self.meta_file.read_text())
+            if meta.get("md5") == md5:
+                logger.info("Reusing cached ToF windows from %s", self.cache_file)
+                with open(self.cache_file, "rb") as f:
+                    return pickle.load(f)
+
+        result = create_tof_windows_with_info(
+            df,
+            window_size=self.window_size,
+            stride=self.stride,
+            tof_cols=self.tof_cols,
+            min_sequence_length=self.min_len,
+            fill_value=self.fill_value,
+        )
+        if use_cache:
+            with open(self.cache_file, "wb") as f:
+                pickle.dump(result, f)
+            self.meta_file.write_text(json.dumps({"md5": md5}))
+        logger.info("ToF windows shape %s", result[0].shape)
+        return result
+
+
 class Preprocessor:
     """Manage preprocessing statistics and transformations."""
 
@@ -245,6 +296,7 @@ class Preprocessor:
         self.win_builder = WindowTensorBuilder(self.config)
         self.tab_builder = TabularFeatureBuilder(self.config)
         self.tof_builder = ToFVoxelBuilder(self.config)
+        self.tof_win_builder = ToFWindowBuilder(self.config)
 
         self.sensor_scaler = StandardScaler()
         self.demo_scaler = StandardScaler()
@@ -404,18 +456,21 @@ class Preprocessor:
         tab_normalized = self.tab_scaler.transform(tab_clean)
         
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
+        tof_windows, _ = self.tof_win_builder.build(df_proc, use_cache=use_cache)
         logger.info(
-            "Output shapes: windows=%s, demographics=%s, tabular=%s, tof=%s",
+            "Output shapes: windows=%s, demographics=%s, tabular=%s, tof=%s, tof_win=%s",
             X_sensor.shape,
             X_demo.shape,
             tab.shape,
             tof_tensor.shape,
+            tof_windows.shape,
         )
         return {
             "windows": X_sensor_normalized,
             "demographics": X_demo_normalized,
             "tabular": tab_normalized,
             "tof_voxel": tof_tensor,
+            "tof_windows": tof_windows,
             "labels": y,
             "info": info,
         }

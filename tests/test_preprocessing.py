@@ -94,6 +94,7 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
     assert result["demographics"].shape == (1, 7)
     assert result["tabular"].shape == (1, 129)
     assert result["tof_voxel"].shape == (len(df), 5, 8, 8)
+    assert result["tof_windows"].shape == (1, 16, 5, 8, 8)
     assert result["labels"].shape == (1,)
     assert len(result["info"]) == 1
 
@@ -101,6 +102,7 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
         (pp.win_builder.cache_file, pp.win_builder.meta_file),
         (pp.tab_builder.cache_file, pp.tab_builder.meta_file),
         (pp.tof_builder.cache_file, pp.tof_builder.meta_file),
+        (pp.tof_win_builder.cache_file, pp.tof_win_builder.meta_file),
     ]
     cleaned = pp._maybe_clean(df)
     md5 = df_md5(cleaned)
@@ -114,5 +116,5 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
     pp.save(pkl)
     loaded = Preprocessor.load(pkl)
     out = loaded.transform(df)
-    for key in ["windows", "demographics", "tabular", "tof_voxel"]:
+    for key in ["windows", "demographics", "tabular", "tof_voxel", "tof_windows"]:
         np.testing.assert_allclose(result[key], out[key])
