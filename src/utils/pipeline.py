@@ -98,7 +98,31 @@ class TabularFeatureBuilder:
         self.meta_file = self.cache_dir / "tabular_meta.json"
         self.cache_dir.mkdir(exist_ok=True)
 
-    def build(self, df: pd.DataFrame, windows=None, use_cache: bool = True):
+    def build(
+        self,
+        df: pd.DataFrame,
+        windows=None,
+        use_cache: bool = True,
+        *,
+        use_wavelet: bool | None = None,
+        use_tda: bool | None = None,
+    ):
+        """Return tabular features for each window.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw sensor dataframe.
+        windows : tuple or None
+            Precomputed window tensors from :class:`WindowTensorBuilder`.
+        use_cache : bool, default True
+            If True, reuse cached results when available.
+        use_wavelet : bool | None, optional
+            Override config to compute wavelet features.
+        use_tda : bool | None, optional
+            Override config to compute TDA features.
+        """
+
         md5 = df_md5(df)
         if use_cache and self.cache_file.exists() and self.meta_file.exists():
             meta = json.loads(self.meta_file.read_text())
@@ -115,13 +139,18 @@ class TabularFeatureBuilder:
         fft = compute_fft_band_energy(
             X_sensor, fs=self.sampling_rate, bands=self.fft_bands
         )
+
+        # decide whether to compute optional features
+        use_wavelet = self.use_wavelet if use_wavelet is None else use_wavelet
+        use_tda = self.use_tda if use_tda is None else use_tda
+
         feats = [stats, peaks, fft]
-        if self.use_wavelet:
+        if use_wavelet:
             wave = compute_wavelet_features(
                 X_sensor, wavelet=self.wavelet, level=self.wavelet_level
             )
             feats.append(wave)
-        if self.use_tda:
+        if use_tda:
             tda = compute_persistence_image_features_batch(
                 X_sensor,
                 dimension=self.tda_dimension,
