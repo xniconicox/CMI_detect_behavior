@@ -89,19 +89,18 @@ class TabularFeatureBuilder:
         self.meta_file = self.cache_dir / "tabular_meta.json"
         self.cache_dir.mkdir(exist_ok=True)
 
-    def build(self, df: pd.DataFrame, use_cache: bool = True):
+    def build(self, df: pd.DataFrame, windows=None, use_cache: bool = True):
         md5 = df_md5(df)
-        if (
-            use_cache
-            and self.cache_file.exists()
-            and self.meta_file.exists()
-        ):
+        if use_cache and self.cache_file.exists() and self.meta_file.exists():
             meta = json.loads(self.meta_file.read_text())
             if meta.get("md5") == md5:
                 with open(self.cache_file, "rb") as f:
                     return pickle.load(f)
 
-        X_sensor, X_demo, y, info = self.window_builder.build(df, use_cache=use_cache)
+        if windows is None:
+            X_sensor, X_demo, y, info = self.window_builder.build(df, use_cache=use_cache)
+        else:
+            X_sensor, X_demo, y, info = windows
         stats = compute_basic_statistics(X_sensor)
         peaks = compute_peak_features(X_sensor)
         fft = compute_fft_band_energy(
@@ -213,12 +212,13 @@ class Preprocessor:
 
     def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":
         df_proc = self._maybe_clean(df)
-        X_sensor, X_demo, _, _ = self.win_builder.build(df_proc, use_cache=use_cache)
+        windows = self.win_builder.build(df_proc, use_cache=use_cache)
+        X_sensor, X_demo, _, _ = windows
         self.sensor_scaler.fit(
             np.nan_to_num(X_sensor.reshape(-1, X_sensor.shape[-1]), nan=0.0)
         )
         self.demo_scaler.fit(X_demo)
-        tab, _, _ = self.tab_builder.build(df_proc, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
         self.tab_scaler.fit(tab)
         self._fitted = True
         return self
@@ -227,12 +227,13 @@ class Preprocessor:
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
         df_proc = self._maybe_clean(df)
-        X_sensor, X_demo, y, info = self.win_builder.build(df_proc, use_cache=use_cache)
+        windows = self.win_builder.build(df_proc, use_cache=use_cache)
+        X_sensor, X_demo, y, info = windows
         X_sensor = self.sensor_scaler.transform(
             X_sensor.reshape(-1, X_sensor.shape[-1])
         ).reshape(X_sensor.shape)
         X_demo = self.demo_scaler.transform(X_demo)
-        tab, _, _ = self.tab_builder.build(df_proc, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
         tab = self.tab_scaler.transform(tab)
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
         return {
