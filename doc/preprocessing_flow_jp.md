@@ -2,6 +2,8 @@
 
 本プロジェクトで用いる前処理ステップを日本語で整理します。センサ時系列データと年齢・性別などの **Demographics** 情報をどの順番で処理し、各モデルに入力するかをまとめました。
 
+生成される前処理出力ファイルの一覧は [preprocessing_outputs.md](preprocessing_outputs.md) にまとめています。
+
 ## 1. 生データのロード
 
 - `train.csv` / `test.csv` … センサ時系列 (加速度, 回転, Thermal, ToF など)
@@ -73,4 +75,9 @@
 | **ToF-3D-CNN**        | ToF 3D ボクセルテンソル (Block K)                           |
 
 ウィンドウ化前後の正規化や利き手補正の順序は、`doc/preprocessing_pipeline.md` の「主な処理の流れ」に準拠しています【F:doc/preprocessing_pipeline.md†L21-L37】。
+
+### 前処理結果の保存と再利用
+
+`Preprocessor` オブジェクトは `save(path)` メソッドでスケーラー設定とともに保存できます。
+推論時には `Preprocessor.load(path)` で復元し、同じ前処理を適用します。
 
