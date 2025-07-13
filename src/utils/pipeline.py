@@ -12,8 +12,16 @@ from sklearn.preprocessing import StandardScaler
 
 from .io_utils import CACHE_DIR, df_md5
 
+from pathlib import Path
+import yaml
+
 from .config_utils import load_config
-from .preprocessing import create_sliding_windows_with_demographics
+from .preprocessing import (
+    create_sliding_windows_with_demographics,
+    handedness_correction_v2,
+    clean_sensor_missing_values,
+    clean_missing_sensor_data_parallel_disk,
+)
 from .tof import tof_to_voxel_tensor
 from .feature_engineering import (
     compute_basic_statistics,
@@ -141,7 +149,14 @@ class ToFVoxelBuilder:
 class Preprocessor:
     """Manage preprocessing statistics and transformations."""
 
-    def __init__(self, config: dict | None = None) -> None:
+    def __init__(
+        self,
+        config: dict | None = None,
+        *,
+        use_handedness: bool = True,
+        use_basic_cleaning: bool = True,
+        use_interp_cleaning: bool = True,
+    ) -> None:
         self.config = config or load_config()
         self.win_builder = WindowTensorBuilder(self.config)
         self.tab_builder = TabularFeatureBuilder(self.config)
@@ -150,15 +165,57 @@ class Preprocessor:
         self.sensor_scaler = StandardScaler()
         self.demo_scaler = StandardScaler()
         self.tab_scaler = StandardScaler()
+
+        self.use_handedness = use_handedness
+        self.use_basic_cleaning = use_basic_cleaning
+        self.use_interp_cleaning = use_interp_cleaning
+
+        pp = self.config.get("preprocessing", {})
+        depth = pp.get("tof_depth", 5)
+        h = pp.get("tof_height", 8)
+        w = pp.get("tof_width", 8)
+        self.sensor_type_groups = {
+            "Accelerometer": self.config.get("sensor_acc_cols", []),
+            "Rotation": self.config.get("sensor_rot_cols", []),
+            "Thermal": self.config.get("sensor_thm_cols", []),
+            "ToF_Sensor": [f"tof_{d}_v{i}" for d in range(1, depth + 1) for i in range(h * w)],
+        }
+
+        interp_path = Path(__file__).resolve().parents[2] / "config" / "interp_params.yaml"
+        if interp_path.exists():
+            with open(interp_path, "r") as f:
+                self.interp_params = yaml.safe_load(f)
+        else:
+            self.interp_params = None
+
         self._fitted = False
 
+    def _maybe_clean(self, df: pd.DataFrame) -> pd.DataFrame:
+        processed = df.copy()
+        if self.use_handedness:
+            processed = handedness_correction_v2(processed)
+        if self.use_basic_cleaning:
+            processed = clean_sensor_missing_values(
+                processed, self.sensor_type_groups
+            )
+        if self.use_interp_cleaning:
+            keep = self.config.get("demographics_cols", []) + ["gesture"]
+            processed = clean_missing_sensor_data_parallel_disk(
+                processed,
+                sensor_type_groups=self.sensor_type_groups,
+                interp_params=self.interp_params,
+                keep_cols=keep,
+            )
+        return processed
+
     def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":
-        X_sensor, X_demo, _, _ = self.win_builder.build(df, use_cache=use_cache)
+        df_proc = self._maybe_clean(df)
+        X_sensor, X_demo, _, _ = self.win_builder.build(df_proc, use_cache=use_cache)
         self.sensor_scaler.fit(
             np.nan_to_num(X_sensor.reshape(-1, X_sensor.shape[-1]), nan=0.0)
         )
         self.demo_scaler.fit(X_demo)
-        tab, _, _ = self.tab_builder.build(df, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(df_proc, use_cache=use_cache)
         self.tab_scaler.fit(tab)
         self._fitted = True
         return self
@@ -166,14 +223,15 @@ class Preprocessor:
     def transform(self, df: pd.DataFrame, use_cache: bool = True) -> dict:
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
-        X_sensor, X_demo, y, info = self.win_builder.build(df, use_cache=use_cache)
+        df_proc = self._maybe_clean(df)
+        X_sensor, X_demo, y, info = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor = self.sensor_scaler.transform(
             X_sensor.reshape(-1, X_sensor.shape[-1])
         ).reshape(X_sensor.shape)
         X_demo = self.demo_scaler.transform(X_demo)
-        tab, _, _ = self.tab_builder.build(df, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(df_proc, use_cache=use_cache)
         tab = self.tab_scaler.transform(tab)
-        tof_tensor = self.tof_builder.build(df, use_cache=use_cache)
+        tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
         return {
             "windows": X_sensor,
             "demographics": X_demo,
