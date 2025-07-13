@@ -7,10 +7,9 @@ import numpy as np
 import pandas as pd
 import json
 import pickle
-import hashlib
 from sklearn.preprocessing import StandardScaler
 
-from .io_utils import CACHE_DIR, df_md5
+from .io_utils import df_md5
 
 from pathlib import Path
 import yaml

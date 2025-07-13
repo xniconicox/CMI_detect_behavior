@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
-from sklearn.preprocessing import StandardScaler
 
 # ============================================================
 # A. 基本統計量 (mean / std / range / RMS / energy)
