@@ -48,6 +48,8 @@ python scripts/run_preprocessing.py \
 - `--use-cache` : 中間結果のキャッシュを利用して計算を省略します。
 - `--mode train` : `fit` と `transform` を実行して学習済み `Preprocessor` を保存します。
 - `--mode predict` : `preprocessor.pkl` を読み込み `transform` のみ実行します。
+- `--log-file` : ログを保存するファイルパス。省略時は
+  `output_dir/<experiment_name>/preprocessed/preprocess.log` に出力されます。
 
 ## 4. 出力ファイル
 

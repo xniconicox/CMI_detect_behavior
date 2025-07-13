@@ -17,11 +17,13 @@ import argparse
 from pathlib import Path
 from typing import Any
 import pickle
+import logging
 
 import pandas as pd
 import yaml
 
 from src.utils.pipeline import Preprocessor
+from src.utils.logging_utils import setup_logging
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -36,6 +38,7 @@ def save_dict(data: dict, prefix: str, out_dir: Path) -> None:
         file = out_dir / f"{prefix}_{key}.pkl"
         with open(file, "wb") as f:
             pickle.dump(value, f)
+        logging.getLogger(__name__).info("Saved %s", file)
 
 
 def main() -> None:
@@ -57,6 +60,12 @@ def main() -> None:
         default="train",
         help="train: fit and transform train/test, predict: transform only",
     )
+    parser.add_argument(
+        "--log-file",
+        help=(
+            "log file path (default: <output_dir>/<experiment>/preprocessed/preprocess.log)"
+        ),
+    )
     args = parser.parse_args()
 
     config = load_yaml(Path(args.config))
@@ -65,9 +74,15 @@ def main() -> None:
     pre_dir = out_root / args.experiment_name / "preprocessed"
     pre_dir.mkdir(parents=True, exist_ok=True)
 
+    log_path = Path(args.log_file) if args.log_file else pre_dir / "preprocess.log"
+    setup_logging(log_path)
+    logger = logging.getLogger(__name__)
+
     if args.mode == "train":
+        logger.info("Loading train.csv and test.csv")
         train_df = pd.read_csv(data_dir / "train.csv")
         test_df = pd.read_csv(data_dir / "test.csv")
+        logger.info("Fitting Preprocessor")
         pp = Preprocessor(config)
         pp.fit(train_df, use_cache=args.use_cache)
         train_data = pp.transform(train_df, use_cache=args.use_cache)
@@ -76,13 +91,18 @@ def main() -> None:
         # save results
         save_dict(train_data, "train", pre_dir)
         save_dict(test_data, "test", pre_dir)
+        logger.info("Saved train/test outputs to %s", pre_dir)
         pp.save(pre_dir / "preprocessor.pkl")
+        logger.info("Saved preprocessor to %s", pre_dir / "preprocessor.pkl")
 
     else:  # predict
+        logger.info("Loading test.csv for prediction")
         df = pd.read_csv(data_dir / "test.csv")
+        logger.info("Loading preprocessor from %s", pre_dir / "preprocessor.pkl")
         pp = Preprocessor.load(pre_dir / "preprocessor.pkl")
         data = pp.transform(df, use_cache=args.use_cache)
         save_dict(data, "predict", pre_dir)
+        logger.info("Saved prediction outputs to %s", pre_dir)
 
 
 if __name__ == "__main__":

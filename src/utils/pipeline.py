@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import json
 import pickle
+import logging
 from sklearn.preprocessing import StandardScaler
 
 from .io_utils import df_md5
@@ -32,6 +33,9 @@ from .feature_engineering import (
 from .imu import add_world_acc_features
 
 
+logger = logging.getLogger(__name__)
+
+
 class WindowTensorBuilder:
     """Generate IMU window tensors with demographics."""
 
@@ -54,10 +58,17 @@ class WindowTensorBuilder:
         self.cache_dir.mkdir(exist_ok=True)
 
     def build(self, df: pd.DataFrame, use_cache: bool = True):
+        logger.info(
+            "Building windows (size=%d, stride=%d, min_len=%d)",
+            self.window_size,
+            self.stride,
+            self.min_len,
+        )
         md5 = df_md5(df)
         if use_cache and self.cache_file.exists() and self.meta_file.exists():
             meta = json.loads(self.meta_file.read_text())
             if meta.get("md5") == md5:
+                logger.info("Reusing cached windows from %s", self.cache_file)
                 with open(self.cache_file, "rb") as f:
                     return pickle.load(f)
 
@@ -74,6 +85,12 @@ class WindowTensorBuilder:
             with open(self.cache_file, "wb") as f:
                 pickle.dump(result, f)
             self.meta_file.write_text(json.dumps({"md5": md5}))
+        logger.info(
+            "Windows shapes: X_sensor=%s, X_demo=%s, y=%s",
+            result[0].shape,
+            result[1].shape,
+            result[2].shape,
+        )
         return result
 
 
@@ -124,9 +141,17 @@ class TabularFeatureBuilder:
         """
 
         md5 = df_md5(df)
+        use_wavelet = self.use_wavelet if use_wavelet is None else use_wavelet
+        use_tda = self.use_tda if use_tda is None else use_tda
+        logger.info(
+            "Building tabular features (wavelet=%s, tda=%s)",
+            use_wavelet,
+            use_tda,
+        )
         if use_cache and self.cache_file.exists() and self.meta_file.exists():
             meta = json.loads(self.meta_file.read_text())
             if meta.get("md5") == md5:
+                logger.info("Reusing cached tabular features from %s", self.cache_file)
                 with open(self.cache_file, "rb") as f:
                     return pickle.load(f)
 
@@ -141,9 +166,6 @@ class TabularFeatureBuilder:
         )
 
         # decide whether to compute optional features
-        use_wavelet = self.use_wavelet if use_wavelet is None else use_wavelet
-        use_tda = self.use_tda if use_tda is None else use_tda
-
         feats = [stats, peaks, fft]
         if use_wavelet:
             wave = compute_wavelet_features(
@@ -164,6 +186,7 @@ class TabularFeatureBuilder:
             with open(self.cache_file, "wb") as f:
                 pickle.dump(result, f)
             self.meta_file.write_text(json.dumps({"md5": md5}))
+        logger.info("Tabular features shape %s", result[0].shape)
         return result
 
 
@@ -184,10 +207,12 @@ class ToFVoxelBuilder:
         self.cache_dir.mkdir(exist_ok=True)
 
     def build(self, df: pd.DataFrame, use_cache: bool = True):
+        logger.info("Building ToF voxel tensor")
         md5 = df_md5(df)
         if use_cache and self.cache_file.exists() and self.meta_file.exists():
             meta = json.loads(self.meta_file.read_text())
             if meta.get("md5") == md5:
+                logger.info("Reusing cached ToF voxel from %s", self.cache_file)
                 with open(self.cache_file, "rb") as f:
                     return pickle.load(f)
 
@@ -197,6 +222,7 @@ class ToFVoxelBuilder:
             with open(self.cache_file, "wb") as f:
                 pickle.dump(result, f)
             self.meta_file.write_text(json.dumps({"md5": md5}))
+        logger.info("ToF voxel shape %s", result.shape)
         return result
 
 
@@ -275,24 +301,31 @@ class Preprocessor:
         return processed
 
     def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":
+        logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, _, _ = windows
+        logger.info(
+            "Window tensor shape %s, demographics shape %s", X_sensor.shape, X_demo.shape
+        )
         self.sensor_scaler.fit(
             np.nan_to_num(X_sensor.reshape(-1, X_sensor.shape[-1]), nan=0.0)
         )
         self.demo_scaler.fit(X_demo)
         tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
         self.tab_scaler.fit(tab)
+        logger.info("Tabular features shape %s", tab.shape)
         self._fitted = True
         return self
 
     def transform(self, df: pd.DataFrame, use_cache: bool = True) -> dict:
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
+        logger.info("Transforming dataframe of shape %s", df.shape)
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, y, info = windows
+        logger.info("Window tensor shape %s", X_sensor.shape)
         X_sensor = self.sensor_scaler.transform(
             X_sensor.reshape(-1, X_sensor.shape[-1])
         ).reshape(X_sensor.shape)
@@ -300,6 +333,13 @@ class Preprocessor:
         tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
         tab = self.tab_scaler.transform(tab)
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
+        logger.info(
+            "Output shapes: windows=%s, demographics=%s, tabular=%s, tof=%s",
+            X_sensor.shape,
+            X_demo.shape,
+            tab.shape,
+            tof_tensor.shape,
+        )
         return {
             "windows": X_sensor,
             "demographics": X_demo,
@@ -315,6 +355,7 @@ class Preprocessor:
 
     def save(self, path: Path) -> None:
         """Save scaler objects and settings to a pickle file."""
+        logger.info("Saving Preprocessor to %s", path)
         data = {
             "config": self.config,
             "use_handedness": self.use_handedness,
@@ -332,6 +373,7 @@ class Preprocessor:
     @classmethod
     def load(cls, path: Path) -> "Preprocessor":
         """Load scalers and settings from a pickle file."""
+        logger.info("Loading Preprocessor from %s", path)
         with open(path, "rb") as f:
             data = pickle.load(f)
         obj = cls(
