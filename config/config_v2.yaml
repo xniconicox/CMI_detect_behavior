@@ -57,3 +57,5 @@ demographics_cols:
   - height_cm
   - shoulder_to_wrist_cm
   - elbow_to_wrist_cm
+# 追加のdemographics項目は現状なし
+# 必要に応じて追記する
