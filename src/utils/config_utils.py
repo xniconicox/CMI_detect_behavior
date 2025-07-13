@@ -1,7 +1,7 @@
 import yaml
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "config_v2.yaml"
 
 
 def load_config():
