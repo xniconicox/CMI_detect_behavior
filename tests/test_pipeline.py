@@ -13,6 +13,7 @@ from src.utils.pipeline import (
     WindowTensorBuilder,
     TabularFeatureBuilder,
     ToFVoxelBuilder,
+    ToFWindowBuilder,
     Preprocessor,
 )
 
@@ -148,6 +149,28 @@ def test_tof_voxel_builder(tmp_path: Path):
 
     assert builder.cache_file.exists()
     assert builder.meta_file.exists()
+
+
+def test_tof_window_builder(tmp_path: Path):
+    cfg = make_config(tmp_path)
+    df = make_dummy_df()
+    builder = ToFWindowBuilder(cfg)
+
+    windows, info = builder.build(df)
+
+    depth = cfg["preprocessing"]["tof_depth"]
+    h = cfg["preprocessing"]["tof_height"]
+    w = cfg["preprocessing"]["tof_width"]
+    assert windows.shape == (1, cfg["preprocessing"]["window_size"], depth, h, w)
+    assert len(info) == 1
+
+    assert builder.cache_file.exists()
+    assert builder.meta_file.exists()
+    md5_first = json.loads(builder.meta_file.read_text())["md5"]
+    win_cached, info_cached = builder.build(df)
+    md5_second = json.loads(builder.meta_file.read_text())["md5"]
+    assert md5_first == md5_second
+    np.testing.assert_allclose(windows, win_cached)
 
 
 def test_preprocessor_save_load(tmp_path: Path):

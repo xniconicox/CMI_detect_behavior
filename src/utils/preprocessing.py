@@ -5,6 +5,7 @@ Preprocessing utilities for the CMI competition (commented version).
 
 import numpy as np
 import pandas as pd
+from .tof import tof_to_voxel_tensor
 
 
 # ============================================================
@@ -343,6 +344,71 @@ def create_sliding_windows_with_demographics(
         np.asarray(y_windows),
         info,
     )
+
+
+def create_tof_windows_with_info(
+    df: pd.DataFrame,
+    window_size: int,
+    stride: int,
+    tof_cols: list,
+    min_sequence_length: int = 10,
+    fill_value: float = 0.0,
+) -> tuple[np.ndarray, list[dict]]:
+    """Generate sliding windows for ToF voxel tensor with metadata.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe containing ToF pixel columns.
+    window_size : int
+        Length of each window.
+    stride : int
+        Step size between windows.
+    tof_cols : list
+        Column names of ToF pixels to be used.
+    min_sequence_length : int, default 10
+        Minimum sequence length to consider a sequence.
+    fill_value : float, default 0.0
+        Padding value for sequences shorter than ``window_size``.
+
+    Returns
+    -------
+    tuple[np.ndarray, list[dict]]
+        ``windows`` with shape ``(N, window_size, depth, H, W)`` and
+        ``info`` containing metadata for each window.
+    """
+
+    X_windows, info = [], []
+
+    for (subject, seq_id), g in df.groupby(["subject", "sequence_id"]):
+        seq_len = len(g)
+        if seq_len < min_sequence_length:
+            continue
+
+        tensor = tof_to_voxel_tensor(g[tof_cols], fill_value=fill_value)
+        need_pad = seq_len < window_size
+        if need_pad:
+            pad = np.full(
+                (window_size - seq_len,) + tensor.shape[1:],
+                fill_value,
+                dtype=tensor.dtype,
+            )
+            tensor = np.concatenate([tensor, pad], axis=0)
+
+        for s in range(0, len(tensor) - window_size + 1, stride):
+            e = s + window_size
+            X_windows.append(tensor[s:e])
+            info.append(
+                {
+                    "subject": subject,
+                    "sequence_id": seq_id,
+                    "start_idx": s,
+                    "end_idx": e,
+                    "padded": need_pad,
+                }
+            )
+
+    return np.asarray(X_windows, dtype=np.float32), info
 
 
 

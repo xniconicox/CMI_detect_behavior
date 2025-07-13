@@ -83,9 +83,6 @@ def main() -> None:
         logger.info("Loading train.csv and test.csv")
         train_df = pd.read_csv(data_dir / "train.csv")
         test_df = pd.read_csv(data_dir / "test.csv")
-        # Load main data
-        train_df = pd.read_csv(data_dir / "train.csv")
-        test_df = pd.read_csv(data_dir / "test.csv")
         logger.info("Fitting Preprocessor")
         
         # Load demographics data and merge
