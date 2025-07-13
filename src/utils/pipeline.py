@@ -27,6 +27,8 @@ from .feature_engineering import (
     compute_basic_statistics,
     compute_peak_features,
     compute_fft_band_energy,
+    compute_wavelet_features,
+    compute_persistence_image_features_batch,
 )
 from .imu import add_world_acc_features
 
@@ -84,6 +86,13 @@ class TabularFeatureBuilder:
         pp = self.config.get("preprocessing", {})
         self.sampling_rate = pp.get("sampling_rate", 50.0)
         self.fft_bands = pp.get("fft_bands", [])
+        self.use_wavelet = pp.get("use_wavelet_features", False)
+        self.use_tda = pp.get("use_tda_features", False)
+        self.wavelet = pp.get("wavelet", "db4")
+        self.wavelet_level = pp.get("wavelet_level", 3)
+        self.tda_dimension = pp.get("tda_dimension", 1)
+        self.tda_bins = pp.get("tda_bins", 20)
+        self.tda_sigma = pp.get("tda_sigma", 0.1)
         self.window_builder = WindowTensorBuilder(self.config)
         self.cache_dir = get_cache_dir(self.config)
         self.cache_file = self.cache_dir / "tabular_features.pkl"
@@ -107,7 +116,21 @@ class TabularFeatureBuilder:
         fft = compute_fft_band_energy(
             X_sensor, fs=self.sampling_rate, bands=self.fft_bands
         )
-        features = np.hstack([stats, peaks, fft, X_demo])
+        feats = [stats, peaks, fft]
+        if self.use_wavelet:
+            wave = compute_wavelet_features(
+                X_sensor, wavelet=self.wavelet, level=self.wavelet_level
+            )
+            feats.append(wave)
+        if self.use_tda:
+            tda = compute_persistence_image_features_batch(
+                X_sensor,
+                dimension=self.tda_dimension,
+                n_bins=self.tda_bins,
+                sigma=self.tda_sigma,
+            )
+            feats.append(tda)
+        features = np.hstack(feats + [X_demo])
         result = (features, y, info)
         if use_cache:
             with open(self.cache_file, "wb") as f:
