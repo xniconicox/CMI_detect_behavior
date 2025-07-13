@@ -362,21 +362,25 @@ class Preprocessor:
         X_clean = X_sensor.copy()
         
         # センサー別の処理
-        sensor_config = self.config.get("sensor_cols", [])
+        sensor_config = self.win_builder.sensor_cols
         acc_cols = self.config.get("sensor_acc_cols", [])
         rot_cols = self.config.get("sensor_rot_cols", [])
         thm_cols = self.config.get("sensor_thm_cols", [])
+
+        acc_indices = []
+        rot_indices = []
+        thm_indices = []
         
         # Accelerometer: 0で置換（物理的に正当）
         if acc_cols:
-            acc_indices = [i for i, col in enumerate(sensor_config) if col in acc_cols]
+            acc_indices = [sensor_config.index(col) for col in acc_cols if col in sensor_config]
             for idx in acc_indices:
                 if idx < X_clean.shape[-1]:
                     X_clean[..., idx] = np.nan_to_num(X_clean[..., idx], nan=0.0)
         
         # Rotation: 単位クォータニオンで置換
         if rot_cols:
-            rot_indices = [i for i, col in enumerate(sensor_config) if col in rot_cols]
+            rot_indices = [sensor_config.index(col) for col in rot_cols if col in sensor_config]
             for i, idx in enumerate(rot_indices):
                 if idx < X_clean.shape[-1]:
                     if i == 0:  # w成分
@@ -386,7 +390,7 @@ class Preprocessor:
         
         # Thermal: 前後の値で補間（簡易版）
         if thm_cols:
-            thm_indices = [i for i, col in enumerate(sensor_config) if col in thm_cols]
+            thm_indices = [sensor_config.index(col) for col in thm_cols if col in sensor_config]
             for idx in thm_indices:
                 if idx < X_clean.shape[-1]:
                     # 時系列方向で補間
