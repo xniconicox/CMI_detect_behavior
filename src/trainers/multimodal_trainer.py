@@ -48,11 +48,11 @@ class MultimodalTrainer:
                     return pickle.load(f)
             raise FileNotFoundError(f"{name} ファイルが見つかりません")
 
-        X_sensor = _load("X_sensor_windows")
-        X_demo = _load("X_demographics")
-        X_tab = _load("X_tabular")
-        X_tof = _load("X_tof_voxel")
-        y = _load("y")
+        X_sensor = _load("train_windows")
+        X_demo = _load("train_demographics")
+        X_tab = _load("train_tabular")
+        X_tof = _load("train_tof_windows")
+        y = _load("train_labels")
 
         print(f"センサー: {X_sensor.shape}")
         print(f"人口統計: {X_demo.shape}")
