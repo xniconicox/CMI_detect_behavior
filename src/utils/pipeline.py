@@ -37,6 +37,16 @@ from .imu import add_world_acc_features
 logger = logging.getLogger(__name__)
 
 
+def validate_no_nan(array: np.ndarray, name: str) -> None:
+    """ArrayにNaNが含まれていないか検証する."""
+    if array is None:
+        return
+    if np.isnan(array).any():
+        msg = f"NaN detected in {name}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+
 class WindowTensorBuilder:
     """Generate IMU window tensors with demographics."""
 
@@ -469,6 +479,13 @@ class Preprocessor:
             tof_tensor.shape,
             tof_windows.shape,
         )
+
+        validate_no_nan(X_sensor_normalized, "windows")
+        validate_no_nan(X_demo_normalized, "demographics")
+        validate_no_nan(tab_normalized, "tabular")
+        validate_no_nan(tof_tensor, "tof_voxel")
+        validate_no_nan(tof_windows, "tof_windows")
+
         return {
             "windows": X_sensor_normalized,
             "demographics": X_demo_normalized,
