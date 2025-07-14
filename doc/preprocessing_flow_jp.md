@@ -32,14 +32,13 @@
 
 得られる IMU ウィンドウテンソル (Block J) は LSTM/GRU 系モデルで使用します。
 
-## 5. 正規化
-
-- `normalize_sensor_data` でセンサーデータを z-score 標準化
-- `normalize_tabular_data` で Demographics を正規化
-
-## 6. 利き手補正
+## 5. 利き手補正
 
 左利きサンプルのみ `handedness_correction_v2` を適用し、IMU の Y/Z 軸や ToF チャンネルを反転します (Block L)。
+
+## 6. 正規化
+
+- センサーデータおよび Demographics データを `StandardScaler` を用いて標準化します
 
 ## 7. 特徴量抽出
 

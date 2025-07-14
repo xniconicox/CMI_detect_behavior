@@ -20,7 +20,7 @@
 
 ```mermaid
 graph TD
-    A[欠損補完] --> B[利き手補正]
+    A[handedness_correction_v2] --> B[欠損補完]
     B --> C[世界座標変換]
     C --> D[ウィンドウ化]
     D --> E1[Tabular 特徴量]
