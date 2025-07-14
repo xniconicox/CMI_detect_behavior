@@ -26,7 +26,7 @@ output/
 ## 3. 学習の実行
 1. Python スクリプトを実行します。
    ```bash
-   python src/trainers/multimodal_trainer.py
+   python -m src/trainers/multimodal_trainer.py
    ```
 2. `MultimodalTrainer` は下記ファイル名でデータを読み込みます。
    - `train_windows.pkl`
