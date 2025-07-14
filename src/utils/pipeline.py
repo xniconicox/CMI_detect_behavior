@@ -417,6 +417,7 @@ class Preprocessor:
         
         # センサー別の適切な欠損値処理
         X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
+        X_sensor_clean = np.nan_to_num(X_sensor_clean, nan=0.0)
         logger.info(
             "Window tensor shape %s, demographics shape %s", X_sensor.shape, X_demo.shape
         )

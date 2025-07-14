@@ -191,3 +191,49 @@ def test_handle_missing_values_sensor_type(tmp_path: Path):
     thm_series = X_sensor[0, :, thm_idx]
     expected = np.nan_to_num(thm_series, nan=np.nanmean(thm_series))
     np.testing.assert_allclose(X_clean[0, :, thm_idx], expected)
+
+
+def test_preprocessor_fit_all_nan_thermal(tmp_path: Path):
+    cfg = {
+        "cache_dir": str(tmp_path / "cache"),
+        "preprocessing": {
+            "window_size": 16,
+            "stride": 8,
+            "min_sequence_length": 4,
+            "padding_value": 0.0,
+            "sampling_rate": 50.0,
+            "fft_bands": [(0.5, 2), (2, 5), (5, 10), (10, 20)],
+            "wavelet": "db4",
+            "wavelet_level": 3,
+            "tda_dimension": 1,
+            "tda_bins": 20,
+            "tda_sigma": 0.1,
+            "use_wavelet_features": False,
+            "use_tda_features": False,
+            "tof_depth": 5,
+            "tof_height": 8,
+            "tof_width": 8,
+            "use_world_acc": False,
+        },
+        "sensor_acc_cols": ["acc_x", "acc_y", "acc_z"],
+        "sensor_rot_cols": ["rot_w", "rot_x", "rot_y", "rot_z"],
+        "sensor_thm_cols": ["thm_1", "thm_2", "thm_3", "thm_4", "thm_5"],
+        "demographics_cols": [
+            "adult_child",
+            "age",
+            "sex",
+            "handedness",
+            "height_cm",
+            "shoulder_to_wrist_cm",
+            "elbow_to_wrist_cm",
+        ],
+    }
+
+    df = make_dummy_df()
+    for c in ["thm_1", "thm_2", "thm_3", "thm_4", "thm_5"]:
+        df[c] = np.nan
+
+    pp = Preprocessor(cfg, use_interp_cleaning=False)
+
+    # Should not raise even if all thermal values are NaN
+    pp.fit(df)

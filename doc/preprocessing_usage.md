@@ -86,3 +86,5 @@ preprocessed_test = pp.transform(df_test)
 ```
 
 このように、`Preprocessor.save` と `Preprocessor.load` を使うことで学習時と同じ正規化パラメータを再利用できます。
+`pp.save` で生成される `preprocessor.pkl` には `sensor_scaler`、`demo_scaler`、`tab_scaler` の
+各 `StandardScaler` が保存され、推論時は `Preprocessor.load` により自動的に読み込まれます。
