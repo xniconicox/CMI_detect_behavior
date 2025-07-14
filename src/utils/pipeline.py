@@ -397,8 +397,12 @@ class Preprocessor:
                     for window_idx in range(X_clean.shape[0]):
                         series = X_clean[window_idx, :, idx]
                         if np.isnan(series).any():
-                            # 前後の値で補間
-                            series_clean = np.nan_to_num(series, nan=np.nanmean(series))
+                            if np.isnan(series).all():
+                                fill = getattr(self.win_builder, "padding_value", 0.0)
+                                series_clean = np.full_like(series, fill)
+                            else:
+                                # 前後の値で補間
+                                series_clean = np.nan_to_num(series, nan=np.nanmean(series))
                             X_clean[window_idx, :, idx] = series_clean
         
         # その他のセンサー: 0で置換
