@@ -432,6 +432,13 @@ class Preprocessor:
         self.tab_scaler.fit(tab_clean)
         logger.info("Tabular features shape %s", tab.shape)
         
+        # === ToF正規化パラメータ計算 ===
+        tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
+        mask = (tof_tensor != -1)
+        self.tof_mean = float(tof_tensor[mask].mean())
+        self.tof_std = float(tof_tensor[mask].std())
+        logger.info(f"ToF mean: {self.tof_mean:.3f}, std: {self.tof_std:.3f}")
+
         self._fitted = True
         return self
 
@@ -458,9 +465,23 @@ class Preprocessor:
         tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
         tab_clean = np.nan_to_num(tab, nan=0.0)
         tab_normalized = self.tab_scaler.transform(tab_clean)
-        
+        # === ToF正規化 ===
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
+        mask = (tof_tensor != -1)
+        tof_tensor_norm = np.zeros_like(tof_tensor)
+        if hasattr(self, "tof_mean") and hasattr(self, "tof_std") and self.tof_std > 0:
+            tof_tensor_norm[mask] = (tof_tensor[mask] - self.tof_mean) / self.tof_std
+        else:
+            tof_tensor_norm = tof_tensor  # 正規化できない場合はそのまま
+
         tof_windows, _ = self.tof_win_builder.build(df_proc, use_cache=use_cache)
+        mask_win = (tof_windows != -1)
+        tof_windows_norm = np.zeros_like(tof_windows)
+        if hasattr(self, "tof_mean") and hasattr(self, "tof_std") and self.tof_std > 0:
+            tof_windows_norm[mask_win] = (tof_windows[mask_win] - self.tof_mean) / self.tof_std
+        else:
+            tof_windows_norm = tof_windows
+            
         logger.info(
             "Output shapes: windows=%s, demographics=%s, tabular=%s, tof=%s, tof_win=%s",
             X_sensor.shape,
@@ -496,6 +517,8 @@ class Preprocessor:
             "demo_scaler": self.demo_scaler,
             "tab_scaler": self.tab_scaler,
             "_fitted": self._fitted,
+            "tof_mean": getattr(self, "tof_mean", None),
+            "tof_std": getattr(self, "tof_std", None),
         }
         with open(path, "wb") as f:
             pickle.dump(data, f)
@@ -517,4 +540,6 @@ class Preprocessor:
         obj.demo_scaler = data["demo_scaler"]
         obj.tab_scaler = data["tab_scaler"]
         obj._fitted = data.get("_fitted", False)
+        obj.tof_mean = data.get("tof_mean", None)
+        obj.tof_std = data.get("tof_std", None)
         return obj

@@ -13,7 +13,7 @@ import pandas as pd
 # 顔・対象物との空間的接近パターンを 3D で表現
 # ------------------------------------------------------------
 
-def tof_to_voxel_tensor(df: pd.DataFrame, fill_value: float = 0.0, prefix: str = "tof_") -> np.ndarray:
+def tof_to_voxel_tensor(df: pd.DataFrame, fill_value: float = -1.0, prefix: str = "tof_") -> np.ndarray:
     """Block L: convert ToF pixel columns → (T, depth, H, W) tensor."""
     import re
     pat = re.compile(fr"^{prefix}(\d+)_v(\d+)$")
