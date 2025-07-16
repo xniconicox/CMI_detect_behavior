@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import json
 from pathlib import Path
 from typing import Any, Dict
 
@@ -185,6 +186,22 @@ class MultimodalTrainer:
             path = Path(path)
         self.model.save(path)
         print(f"モデル保存: {path}")
+
+    # ------------------------------------------------------------------
+    def save_training_history(self, path: str | Path | None = None) -> None:
+        """学習履歴をJSON形式で保存"""
+        if path is None:
+            path = self.result_dir / "training_history.json"
+        else:
+            path = Path(path)
+
+        if not hasattr(self, "history") or self.history is None:
+            raise ValueError("学習履歴が存在しません")
+
+        with open(path, "w") as f:
+            json.dump(self.history.history, f, indent=2)
+
+        print(f"学習履歴保存: {path}")
 
 
 if __name__ == "__main__":
