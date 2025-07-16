@@ -7,11 +7,10 @@ IMUウィンドウ、人口統計、表形式特徴量、ToFボクセルの4種�
 from __future__ import annotations
 
 import os
-import pickle
 import json
+import pickle
 from pathlib import Path
 from typing import Any, Dict
-import json
 
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -38,7 +37,6 @@ class MultimodalTrainer:
         print(f"実験名: {self.experiment_name}")
         print(f"データディレクトリ: {self.data_dir}")
 
-    # ------------------------------------------------------------------
     def load_all_data(self) -> Dict[str, np.ndarray]:
         """各モダリティの前処理済みデータをすべて読み込む"""
         print("前処理済みデータを読み込み中...")
@@ -73,7 +71,6 @@ class MultimodalTrainer:
             "labels": y,
         }
 
-    # ------------------------------------------------------------------
     def build_multimodal_model(
         self,
         sensor_shape: tuple[int, int],
@@ -83,27 +80,22 @@ class MultimodalTrainer:
         num_classes: int,
     ) -> tf.keras.Model:
         """タワー型統合ネットワークを構築"""
-        # センサー時系列タワー
         sensor_input = tf.keras.Input(shape=sensor_shape, name="sensor")
         x1 = tf.keras.layers.Masking()(sensor_input)
         x1 = tf.keras.layers.LSTM(64)(x1)
 
-        # 人口統計タワー
         demo_input = tf.keras.Input(shape=(demo_shape,), name="demo")
         x2 = tf.keras.layers.Dense(32, activation="relu")(demo_input)
 
-        # 表形式タワー
         tab_input = tf.keras.Input(shape=(tab_shape,), name="tabular")
         x3 = tf.keras.layers.Dense(64, activation="relu")(tab_input)
 
-        # ToFボクセルタワー
         tof_input = tf.keras.Input(shape=tof_shape, name="tof")
         x4 = tf.keras.layers.Conv3D(16, 3, activation="relu", padding="same")(tof_input)
         x4 = tf.keras.layers.MaxPooling3D()(x4)
         x4 = tf.keras.layers.Conv3D(32, 3, activation="relu", padding="same")(x4)
         x4 = tf.keras.layers.GlobalAveragePooling3D()(x4)
 
-        # 統合
         merged = tf.keras.layers.concatenate([x1, x2, x3, x4])
         merged = tf.keras.layers.Dense(64, activation="relu")(merged)
         merged = tf.keras.layers.Dropout(0.3)(merged)
@@ -120,10 +112,7 @@ class MultimodalTrainer:
         print(model.summary())
         return model
 
-    # ------------------------------------------------------------------
     def train(self, data: Dict[str, np.ndarray], epochs: int = 50, batch_size: int = 32) -> tf.keras.callbacks.History:
-
-        # データ型の確認と修正
         print("=== データ型確認 ===")
         print(f"X_sensor dtype: {data['sensor'].dtype}")
         print(f"X_demo dtype: {data['demographics'].dtype}")
@@ -131,8 +120,7 @@ class MultimodalTrainer:
         print(f"X_tof dtype: {data['tof'].dtype}")
         print(f"y dtype: {data['labels'].dtype}")
         print(f"y unique values: {np.unique(data['labels'])}")        
-        
-        # """モデルを学習"""
+
         X_s = data["sensor"]
         X_d = data["demographics"]
         X_t = data["tabular"]
@@ -165,24 +153,12 @@ class MultimodalTrainer:
         self.history = history
         return history
 
-    # ------------------------------------------------------------------
     def evaluate(
         self,
         data: Dict[str, np.ndarray],
         *,
         preprocessor_path: str | Path | None = None,
     ) -> Dict[str, Any]:
-        """テストデータで評価
-
-        Parameters
-        ----------
-        data : dict
-            評価用データ
-        preprocessor_path : str | Path, optional
-            ``preprocessor.pkl`` へのパス。指定しない場合は ``self.data_dir``
-            から読み込む。
-        """
-
         X_s = data["sensor"]
         X_d = data["demographics"]
         X_t = data["tabular"]
@@ -192,7 +168,6 @@ class MultimodalTrainer:
         preds = self.model.predict([X_s, X_d, X_t, X_f])
         pred_labels = preds.argmax(axis=1)
 
-        # ラベルエンコーダ読み込み
         label_encoder = None
         if preprocessor_path is None:
             preprocessor_path = self.data_dir / "preprocessor.pkl"
@@ -201,7 +176,7 @@ class MultimodalTrainer:
             if pp_path.exists():
                 pp = Preprocessor.load(pp_path)
                 label_encoder = getattr(pp, "label_encoder", None)
-        except Exception as e:  # pragma: no cover - optional
+        except Exception as e:
             print(f"label_encoder 読み込み失敗: {e}")
 
         cmi_score, binary_f1, macro_f1, test_accuracy = calculate_cmi_score(
@@ -227,9 +202,7 @@ class MultimodalTrainer:
 
         return results
 
-    # ------------------------------------------------------------------
     def save_model(self, path: str | None = None) -> None:
-        """モデルを保存"""
         if path is None:
             path = self.model_dir / "multimodal_model.keras"
         else:
@@ -237,10 +210,29 @@ class MultimodalTrainer:
         self.model.save(path)
         print(f"モデル保存: {path}")
 
+    def save_training_history(self, path: str | None = None) -> Path:
+        if path is None:
+            path = self.result_dir / "training_history.json"
+        else:
+            path = Path(path)
+
+        if self.history is None:
+            raise ValueError("history is not set")
+
+        if hasattr(self.history, "history"):
+            history_dict = self.history.history
+        else:
+            history_dict = self.history
+
+        with open(path, "w") as f:
+            json.dump(history_dict, f, indent=2)
+
+        print(f"学習履歴保存: {path}")
+        return path
+
     def save_evaluation_results(
         self, results: dict, path: str | Path | None = None
     ) -> None:
-        """評価結果をJSON形式で保存"""
         if path is None:
             path = self.result_dir / "evaluation_results.json"
         else:
@@ -271,4 +263,3 @@ if __name__ == "__main__":
         print(results)
     except Exception as e:
         print(f"エラー: {e}")
-
