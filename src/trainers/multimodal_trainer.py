@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import json
 from pathlib import Path
 from typing import Any, Dict
 import json
@@ -236,7 +237,6 @@ class MultimodalTrainer:
         self.model.save(path)
         print(f"モデル保存: {path}")
 
-    # ------------------------------------------------------------------
     def save_evaluation_results(
         self, results: dict, path: str | Path | None = None
     ) -> None:
