@@ -17,15 +17,15 @@ preprocessing:
   wavelet: "db4"
   wavelet_level: 3
   tda_dimension: 1
-  tda_bins: 20
+  tda_bins: 8
   tda_sigma: 0.1
   # 各特徴量計算の有無を制御
-  use_wavelet_features: false
-  use_tda_features: false
+  use_wavelet_features: true
+  use_tda_features: true
   tof_depth: 5
   tof_height: 8
   tof_width: 8
-  use_world_acc: false
+  use_world_acc: true
 
 
 sensor_acc_cols:

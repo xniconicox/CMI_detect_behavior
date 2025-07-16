@@ -117,7 +117,17 @@ class MultimodalTrainer:
 
     # ------------------------------------------------------------------
     def train(self, data: Dict[str, np.ndarray], epochs: int = 50, batch_size: int = 32) -> tf.keras.callbacks.History:
-        """モデルを学習"""
+
+        # データ型の確認と修正
+        print("=== データ型確認 ===")
+        print(f"X_sensor dtype: {data['sensor'].dtype}")
+        print(f"X_demo dtype: {data['demographics'].dtype}")
+        print(f"X_tabular dtype: {data['tabular'].dtype}")
+        print(f"X_tof dtype: {data['tof'].dtype}")
+        print(f"y dtype: {data['labels'].dtype}")
+        print(f"y unique values: {np.unique(data['labels'])}")        
+        
+        # """モデルを学習"""
         X_s = data["sensor"]
         X_d = data["demographics"]
         X_t = data["tabular"]

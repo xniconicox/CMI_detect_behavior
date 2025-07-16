@@ -222,6 +222,10 @@ def clean_missing_sensor_data_parallel_disk(
 
         # --- 欠測補間 -------------------------------------------------
         for s_type, cols in sensor_type_groups.items():
+            # World_Accelerometerの場合はスキップ
+            if s_type == "World_Accelerometer":
+                continue
+                
             params = interp_params[s_type]
             method = params.get("method")
             limit  = params.get("limit", 3)
@@ -244,9 +248,12 @@ def clean_missing_sensor_data_parallel_disk(
 
         # Parquet 出力
         subject, seq_id = key
-        # ❶ 保存したい列を計算
-        save_cols = list(dict.fromkeys(
-            base_cols + sum(sensor_type_groups.values(), [])))
+        # ❶ 保存したい列を計算（存在するカラムのみ）
+        all_cols = base_cols + sum(sensor_type_groups.values(), [])
+        save_cols = list(dict.fromkeys(all_cols))
+        # DataFrameに存在するカラムのみをフィルタ
+        save_cols = [col for col in save_cols if col in g.columns]
+
 
         # ❷ サブセットを取ってから Parquet 書き出し
         out_path = Path(tmp_dir) / f"{subject}_{seq_id}.parquet"
