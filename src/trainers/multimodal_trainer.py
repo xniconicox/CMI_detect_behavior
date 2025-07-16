@@ -10,10 +10,14 @@ import os
 import pickle
 from pathlib import Path
 from typing import Any, Dict
+import json
 
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, f1_score
+
+from src.utils.cmi_evaluation import calculate_cmi_score
+from src.utils.pipeline import Preprocessor
 import tensorflow as tf
 
 
@@ -161,8 +165,23 @@ class MultimodalTrainer:
         return history
 
     # ------------------------------------------------------------------
-    def evaluate(self, data: Dict[str, np.ndarray]) -> Dict[str, Any]:
-        """テストデータで評価"""
+    def evaluate(
+        self,
+        data: Dict[str, np.ndarray],
+        *,
+        preprocessor_path: str | Path | None = None,
+    ) -> Dict[str, Any]:
+        """テストデータで評価
+
+        Parameters
+        ----------
+        data : dict
+            評価用データ
+        preprocessor_path : str | Path, optional
+            ``preprocessor.pkl`` へのパス。指定しない場合は ``self.data_dir``
+            から読み込む。
+        """
+
         X_s = data["sensor"]
         X_d = data["demographics"]
         X_t = data["tabular"]
@@ -171,10 +190,41 @@ class MultimodalTrainer:
 
         preds = self.model.predict([X_s, X_d, X_t, X_f])
         pred_labels = preds.argmax(axis=1)
-        f1 = f1_score(y, pred_labels, average="macro")
+
+        # ラベルエンコーダ読み込み
+        label_encoder = None
+        if preprocessor_path is None:
+            preprocessor_path = self.data_dir / "preprocessor.pkl"
+        try:
+            pp_path = Path(preprocessor_path)
+            if pp_path.exists():
+                pp = Preprocessor.load(pp_path)
+                label_encoder = getattr(pp, "label_encoder", None)
+        except Exception as e:  # pragma: no cover - optional
+            print(f"label_encoder 読み込み失敗: {e}")
+
+        cmi_score, binary_f1, macro_f1, test_accuracy = calculate_cmi_score(
+            pred_labels,
+            y,
+            label_encoder=label_encoder,
+        )
+
         report = classification_report(y, pred_labels, output_dict=True)
-        print(f"Macro F1: {f1:.4f}")
-        return {"f1_macro": f1, "report": report}
+
+        results = {
+            "cmi_score": float(cmi_score),
+            "binary_f1": float(binary_f1),
+            "macro_f1": float(macro_f1),
+            "test_accuracy": float(test_accuracy),
+            "report": report,
+        }
+
+        print(
+            f"CMI Score: {cmi_score:.4f} | Binary F1: {binary_f1:.4f} | "
+            f"Macro F1: {macro_f1:.4f} | Acc: {test_accuracy:.4f}"
+        )
+
+        return results
 
     # ------------------------------------------------------------------
     def save_model(self, path: str | None = None) -> None:
@@ -185,6 +235,30 @@ class MultimodalTrainer:
             path = Path(path)
         self.model.save(path)
         print(f"モデル保存: {path}")
+
+    # ------------------------------------------------------------------
+    def save_evaluation_results(
+        self, results: dict, path: str | Path | None = None
+    ) -> None:
+        """評価結果をJSON形式で保存"""
+        if path is None:
+            path = self.result_dir / "evaluation_results.json"
+        else:
+            path = Path(path)
+
+        def _convert(obj: Any):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, (np.floating, float)):
+                return float(obj)
+            if isinstance(obj, (np.integer, int)):
+                return int(obj)
+            return obj
+
+        serializable = {k: _convert(v) for k, v in results.items()}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False, indent=2)
+        print(f"評価結果保存: {path}")
 
 
 if __name__ == "__main__":
