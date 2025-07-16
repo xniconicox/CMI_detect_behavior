@@ -45,6 +45,11 @@ ToF 用の 3D-CNN をそれぞれタワーとして構築し、最後に結合�
 学習後、モデルは `output/experiments/<experiment_name>/models/multimodal_model.keras`
 として保存されます。学習履歴は `MultimodalTrainer.history` プロパティから取得できます。
 
+また、実験ディレクトリには次のファイルが生成されます。
+- `models/` ディレクトリ: 学習済みモデル
+- `results/` ディレクトリ: `training_history.json` と `evaluation_results.json`
+これらの履歴ファイルは `src/scripts/visualize_training_history.py` を使って可視化できます。
+
 ## 6. 推論・評価
 `evaluate()` を呼び出すとテストデータに対する Macro F1 が計算されます。
 予測値を保存して Kaggle 形式に変換することで提出ファイルを作成できます。
