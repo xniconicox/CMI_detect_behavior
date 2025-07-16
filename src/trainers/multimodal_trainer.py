@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import json
 import pickle
+import json
 from pathlib import Path
 from typing import Any, Dict
 
@@ -187,7 +188,6 @@ class MultimodalTrainer:
         self.model.save(path)
         print(f"モデル保存: {path}")
 
-    # ------------------------------------------------------------------
     def save_training_history(self, path: str | None = None) -> Path:
         """学習履歴をJSON形式で保存"""
         if path is None:
