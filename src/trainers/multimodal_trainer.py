@@ -7,6 +7,7 @@ IMUウィンドウ、人口統計、表形式特徴量、ToFボクセルの4種�
 from __future__ import annotations
 
 import os
+import json
 import pickle
 from pathlib import Path
 from typing import Any, Dict
@@ -185,6 +186,44 @@ class MultimodalTrainer:
             path = Path(path)
         self.model.save(path)
         print(f"モデル保存: {path}")
+
+    # ------------------------------------------------------------------
+    def save_training_history(self, path: str | None = None) -> Path:
+        """学習履歴をJSON形式で保存"""
+        if path is None:
+            path = self.result_dir / "training_history.json"
+        else:
+            path = Path(path)
+
+        if self.history is None:
+            raise ValueError("history is not set")
+
+        if hasattr(self.history, "history"):
+            history_dict = self.history.history
+        else:
+            history_dict = self.history
+
+        with open(path, "w") as f:
+            json.dump(history_dict, f, indent=2)
+
+        print(f"学習履歴保存: {path}")
+        return path
+
+    # ------------------------------------------------------------------
+    def save_evaluation_results(
+        self, results: Dict[str, Any], path: str | None = None
+    ) -> Path:
+        """評価結果をJSON形式で保存"""
+        if path is None:
+            path = self.result_dir / "evaluation_results.json"
+        else:
+            path = Path(path)
+
+        with open(path, "w") as f:
+            json.dump(results, f, indent=2)
+
+        print(f"評価結果保存: {path}")
+        return path
 
 
 if __name__ == "__main__":
