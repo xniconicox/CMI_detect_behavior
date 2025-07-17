@@ -106,22 +106,23 @@ def compute_persistence_image_features_batch(X_windows: np.ndarray, dimension:in
     from gtda.homology import VietorisRipsPersistence
     from gtda.diagrams import PersistenceImage
 
-    # デバッグ: TDA処理前のNaN値確認
-    nan_count = np.isnan(X_windows).sum()
-    if nan_count > 0:
-        print(f"⚠️  TDA処理前: NaN値 {nan_count} 個を発見")
-        print(f"   データ形状: {X_windows.shape}")
+    # # デバッグ: TDA処理前のNaN値確認
+    # nan_count = np.isnan(X_windows).sum()
+    # if nan_count > 0:
+    #     print(f"⚠️  TDA処理前: NaN値 {nan_count} 個を発見")
+    #     print(f"   データ形状: {X_windows.shape}")
         
-        # NaN値を処理
-        X_windows_clean = np.nan_to_num(X_windows, nan=0.0, posinf=1.0, neginf=-1.0)
-        print(f"✅ NaN値を0.0に置換しました")
-    else:
-        X_windows_clean = X_windows
-        print(f"✅ TDA処理前: NaN値なし")
+    #     # NaN値を処理
+    #     X_windows_clean = np.nan_to_num(X_windows, nan=0.0, posinf=1.0, neginf=-1.0)
+    #     print(f"✅ NaN値を0.0に置換しました")
+    # else:
+    #     X_windows_clean = X_windows
+    #     print(f"✅ TDA処理前: NaN値なし")
+
 
     # 1. Takens埋め込み（全ウィンドウまとめて）
     emb = TakensEmbedding(time_delay=1, dimension=dimension)
-    embedded = emb.fit_transform(X_windows_clean)  # shape: (n_samples, new_len, dimension)
+    embedded = emb.fit_transform(X_windows)  # shape: (n_samples, new_len, dimension)
 
     # 2. パーシステンス図（全ウィンドウまとめて）
     vrp = VietorisRipsPersistence(homology_dimensions=[0, 1])
@@ -157,18 +158,8 @@ def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np
 def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level: int = 3) -> np.ndarray:
     """Block I: discrete wavelet band energies using PyWavelets."""
     import pywt
-    
-    # NaN値処理
-    nan_count = np.isnan(X_windows).sum()
-    if nan_count > 0:
-        print(f"⚠️  Wavelet処理前: NaN値 {nan_count} 個を発見")
-        X_windows_clean = np.nan_to_num(X_windows, nan=0.0, posinf=1.0, neginf=-1.0)
-        print(f"✅ NaN値を0.0に置換しました")
-    else:
-        X_windows_clean = X_windows
-    
     feats = []
-    for w in X_windows_clean:
+    for w in X_windows:
         ax_feats = []
         for i in range(w.shape[1]):
             coeffs = pywt.wavedec(w[:, i], wavelet=wavelet, level=level)

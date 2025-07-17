@@ -35,3 +35,5 @@ data/*.zip
 notebooks/cache/
 notebooks/tmp*/
 *.parquet
+
+*.whl
