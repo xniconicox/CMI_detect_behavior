@@ -11,7 +11,7 @@ CMIコンペ（CMI-Detect-Behavor-with-Sensor-Data）のベースライン実装
 - **利き手補正**: 左右利きの違いを考慮したセンサーデータの正規化
 - **前処理**: 欠損値補完、標準化、特徴量抽出
 - **ベースラインモデル**: LightGBMを使用したマルチクラス分類
-- **クロスバリデーション**: 5分割StratifiedKFold
+- **クロスバリデーション**: 5分割StratifiedGroupKFold（同一被験者のデータが学習と検証に跨らないよう分割）
 - **自動実行**: 前処理から提出ファイル作成まで一括実行
 
 ## 🚀 クイックスタート
@@ -142,9 +142,10 @@ params = {
 }
 ```
 
-### クロスバリデーション
+-### クロスバリデーション
 
-- **5分割StratifiedKFold**
+- **5分割StratifiedGroupKFold**
+  - 同一被験者（または sequence_id）が学習と検証に跨らないように分割し、データリークを防止します。
 - **Early Stopping**: 50ラウンド
 - **評価指標**: F1-Score (macro average)
 
