@@ -8,7 +8,7 @@ baseline_model.pyの拡張版
 import pandas as pd
 import numpy as np
 import lightgbm as lgb
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.metrics import f1_score, classification_report, confusion_matrix
 import warnings
 warnings.filterwarnings('ignore')
@@ -44,14 +44,14 @@ def prepare_data(train_features, test_features):
     
     return X_train, y_train_encoded, X_test, le, feature_cols
 
-def train_model_detailed(X_train, y_train, feature_cols, n_folds=5):
+def train_model_detailed(X_train, y_train, feature_cols, n_folds=5, groups=None):
     """LightGBMモデルの訓練（詳細版）"""
     print(f"\n{'-'*50}")
     print("LightGBMモデル訓練開始（詳細版）")
     print(f"{'-'*50}")
     
     # クロスバリデーション設定
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    skf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=42)
     
     # モデルパラメータ
     params = {
@@ -75,7 +75,7 @@ def train_model_detailed(X_train, y_train, feature_cols, n_folds=5):
     fold_true_labels = []
     fold_importance = []
     
-    for fold, (train_idx, valid_idx) in enumerate(skf.split(X_train, y_train), 1):
+    for fold, (train_idx, valid_idx) in enumerate(skf.split(X_train, y_train, groups), 1):
         print(f"\nFold {fold}/{n_folds}")
         
         X_fold_train, X_fold_valid = X_train.iloc[train_idx], X_train.iloc[valid_idx]

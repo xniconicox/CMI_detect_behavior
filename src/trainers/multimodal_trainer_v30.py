@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
-from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.model_selection import (
+    train_test_split,
+    StratifiedGroupKFold,
+)
 from sklearn.metrics import classification_report, f1_score
 
 from src.utils.cmi_evaluation import calculate_cmi_score
@@ -61,7 +64,11 @@ class MultimodalTrainer:
         return y
 
     def load_all_data(self) -> Dict[str, np.ndarray]:
-        """各モダリティの前処理済みデータをすべて読み込む"""
+        """各モダリティの前処理済みデータをすべて読み込む
+
+        追加で ``train_info.pkl`` を読み込み、``subject`` または ``sequence_id``
+        の配列を ``groups`` キーで返す。
+        """
         print("前処理済みデータを読み込み中...")
 
         def _load(name: str) -> np.ndarray:
@@ -79,12 +86,22 @@ class MultimodalTrainer:
         X_tab = _load("train_tabular")
         X_tof = _load("train_tof_windows")
         y = _load("train_labels")
+        info = _load("train_info")
+
+        if isinstance(info, list) and len(info) > 0 and isinstance(info[0], dict):
+            groups = np.array([
+                d.get("subject") if d.get("subject") is not None else d.get("sequence_id")
+                for d in info
+            ])
+        else:
+            groups = np.asarray(info)
 
         print(f"センサー: {X_sensor.shape}")
         print(f"人口統計: {X_demo.shape}")
         print(f"表形式: {X_tab.shape}")
         print(f"ToF: {X_tof.shape}")
         print(f"ラベル: {y.shape}")
+        print(f"グループ数: {len(groups)}")
 
         return {
             "sensor": X_sensor,
@@ -92,6 +109,7 @@ class MultimodalTrainer:
             "tabular": X_tab,
             "tof": X_tof,
             "labels": y,
+            "groups": groups,
         }
 
     def build_multimodal_model(
@@ -216,8 +234,9 @@ class MultimodalTrainer:
         epochs: int = 50,
         batch_size: int = 32,
         n_splits: int = 5,
+        groups: np.ndarray | None = None,
     ) -> Dict[str, Any]:
-        """StratifiedKFold を用いたクロスバリデーション学習"""
+        """StratifiedGroupKFold を用いたクロスバリデーション学習"""
         print("=== データ型確認 ===")
         print(f"X_sensor dtype: {data['sensor'].dtype}")
         print(f"X_demo dtype: {data['demographics'].dtype}")
@@ -232,10 +251,13 @@ class MultimodalTrainer:
         X_f = data["tof"]
         y = data["labels"]
 
-        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        if groups is None:
+            groups = data.get("groups")
+
+        skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=42)
         fold_scores: list[float] = []
 
-        for fold, (tr_idx, val_idx) in enumerate(skf.split(np.arange(len(y)), y), 1):
+        for fold, (tr_idx, val_idx) in enumerate(skf.split(np.arange(len(y)), y, groups), 1):
             print(f"Fold {fold}/{n_splits}")
             model, history, f1 = self._train_fold(
                 X_s,
