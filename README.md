@@ -228,6 +228,12 @@ params = {
 # notebooks/train_and_visualize.ipynb を参照
 ```
 
+マルチモーダル学習スクリプトを使う場合は次のコマンドを実行します。
+
+```bash
+bash scripts/run_multimodal_training_v30.sh
+```
+
 ### 3. 結果の確認
 
 ```bash
