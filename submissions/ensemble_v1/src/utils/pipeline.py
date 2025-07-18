@@ -551,9 +551,10 @@ class Preprocessor:
         X_demo_normalized = self.demo_scaler.transform(X_demo_clean)
         
         # 表形式特徴量の正規化
-        tab, _, _ = self.tab_builder.build(df_proc, windows=windows, use_cache=use_cache)
-        tab_clean = np.nan_to_num(tab, nan=0.0)
-        tab_normalized = self.tab_scaler.transform(tab_clean)
+        processed_windows = (X_sensor_clean, X_demo, y, info)
+        tab, _, _ = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
+        # tab_clean = np.nan_to_num(tab, nan=0.0)
+        tab_normalized = self.tab_scaler.transform(tab)
         
         # === ToF正規化 ===
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)

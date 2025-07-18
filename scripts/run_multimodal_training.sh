@@ -10,7 +10,7 @@ set -e  # エラー時に停止
 # ============================================================
 
 # 実験設定
-EXPERIMENT_NAME="20250713_preproc_pipeline_first_try"  # 前処理済みデータの実験名
+EXPERIMENT_NAME="20250717_preproc_train"  # 前処理済みデータの実験名
 TRAINER_NAME="multimodal"                              # トレーナー名
 MODEL_NAME="multimodal_model"                          # 保存するモデル名
 

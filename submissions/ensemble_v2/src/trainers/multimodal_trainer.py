@@ -34,8 +34,8 @@ class MultimodalTrainer:
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.result_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Experiment name: {self.experiment_name}")
-        print(f"Data directory: {self.data_dir}")
+        print(f"実験名: {self.experiment_name}")
+        print(f"データディレクトリ: {self.data_dir}")
 
     def load_all_data(self) -> Dict[str, np.ndarray]:
         """各モダリティの前処理済みデータをすべて読み込む"""

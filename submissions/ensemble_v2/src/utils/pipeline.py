@@ -197,10 +197,10 @@ class TabularFeatureBuilder:
             
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])
-        final_nan_count = np.isnan(features).sum()
-        if final_nan_count > 0:
-            logger.warning(f"TabularFeatureBuilder: 最終特徴量にNaN値 {final_nan_count} 個を検出、0.0に置換")
-            features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
+        # final_nan_count = np.isnan(features).sum()
+        # if final_nan_count > 0:
+        #     logger.warning(f"TabularFeatureBuilder: 最終特徴量にNaN値 {final_nan_count} 個を検出、0.0に置換")
+        #     features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
         result = (features, y, info)
         if use_cache:
             with open(self.cache_file, "wb") as f:
@@ -373,7 +373,6 @@ class Preprocessor:
         if self.use_world_acc:
             processed = add_world_acc_features(processed)
         return processed
-    
     def _debug_nan_values(self, X_sensor: np.ndarray, stage: str = ""):
         """NaN値のデバッグ用関数"""
         if X_sensor is None:
@@ -540,7 +539,7 @@ class Preprocessor:
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, y, info = windows
         
-        # センサー別の適切な欠損値処理、正規化
+        # センサー別の適切な欠損値処理
         logger.info("Window tensor shape %s", X_sensor.shape)
         X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
         X_sensor_normalized = self.sensor_scaler.transform(
@@ -567,6 +566,7 @@ class Preprocessor:
             tof_tensor_norm[mask] = (tof_tensor[mask] - self.tof_mean) / self.tof_std
         else:
             tof_tensor_norm = tof_tensor  # 正規化できない場合はそのまま
+
         tof_windows, _ = self.tof_win_builder.build(df_proc, use_cache=use_cache)
         mask_win = (tof_windows != -1)
         tof_windows_norm = np.zeros_like(tof_windows)

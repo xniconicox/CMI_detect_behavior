@@ -54,3 +54,9 @@ ToF 用の 3D-CNN をそれぞれタワーとして構築し、最後に結合�
 `evaluate()` を呼び出すとテストデータに対する Macro F1 が計算されます。
 予測値を保存して Kaggle 形式に変換することで提出ファイルを作成できます。
 
+
+
+
+## usage
+
+bash scripts/run_multimodal_training.sh

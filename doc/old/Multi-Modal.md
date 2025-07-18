@@ -1,3 +1,4 @@
+```mermaid
 graph TD
     T1[ToF Input (128,5,8,8)] --> C1[Conv3D → MaxPool → Conv3D]
     C1 --> GAP[GlobalAvgPool3D (→ 32)]
