@@ -266,7 +266,7 @@ class MultimodalTrainerV30:
         fold_histories = []
         for fold, (tr_idx, val_idx) in enumerate(skf.split(np.arange(len(y)), y, groups), 1):
             print(f"Fold {fold}/{n_splits}")
-            model, history, f1, cmi_score = self._train_fold(
+            result = self._train_fold(
                 X_s,
                 X_d,
                 X_t,
@@ -277,9 +277,15 @@ class MultimodalTrainerV30:
                 epochs=epochs,
                 batch_size=batch_size,
             )
+            if len(result) == 4:
+                model, history, f1, cmi_score = result
+            else:
+                model, history, f1 = result
+                cmi_score = 0.0
             fold_scores.append(f1)
             fold_cmi_scores.append(cmi_score)
-            fold_histories.append(history)
+            if history is not None:
+                fold_histories.append(history)
             
             # モデル保存
             model_path = self.model_dir / f"multimodal_model_v30_fold{fold}.keras"
@@ -565,3 +571,6 @@ if __name__ == "__main__":
         print(results)
     except Exception as e:
         print(f"エラー: {e}")
+
+# テスト互換用エイリアス
+MultimodalTrainer = MultimodalTrainerV30
