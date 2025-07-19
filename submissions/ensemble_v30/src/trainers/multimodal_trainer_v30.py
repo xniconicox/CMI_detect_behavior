@@ -27,7 +27,7 @@ from tensorflow import keras
 
 
 class MultimodalTrainerV30:
-    """多モダリティモデル学習管理クラス（v30）"""
+    """多モダリティモデル学習管理クラス"""
 
     def __init__(self, experiment_name: str = "multimodal") -> None:
         self.experiment_name = experiment_name
@@ -91,7 +91,8 @@ class MultimodalTrainerV30:
 
         if isinstance(info, list) and len(info) > 0 and isinstance(info[0], dict):
             groups = np.array([
-                d.get("subject") for d in info
+                d.get("subject") if d.get("subject") is not None else d.get("sequence_id")
+                for d in info
             ])
         else:
             groups = np.asarray(info)

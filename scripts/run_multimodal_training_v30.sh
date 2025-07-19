@@ -10,7 +10,7 @@ set -e  # エラー時に停止
 # ============================================================
 
 # 実験設定
-EXPERIMENT_NAME="20250717_preproc_train"  # 前処理済みデータの実験名
+EXPERIMENT_NAME="20250717_preproc_train_v30"  # 前処理済みデータの実験名
 TRAINER_NAME="multimodal_v30"                              # トレーナー名
 MODEL_NAME="multimodal_model_v30"                          # 保存するモデル名
 CONFIG_PATH="./config/config_multimodal_v20.json"         # 設定ファイルパス
@@ -138,6 +138,7 @@ results = trainer.evaluate(data)
 trainer.save_training_history()
 trainer.save_evaluation_results(results)
 print('Macro F1 Score:', results.get('macro_f1', None))
+print('CMI Score:', results.get('cmi_score', None))
 print('学習完了！')
 " 2>&1 | tee "$LOG_FILE"
 else
@@ -160,6 +161,7 @@ results = trainer.evaluate(data)
 trainer.save_training_history()
 trainer.save_evaluation_results(results)
 print('Macro F1 Score:', results.get('macro_f1', None))
+print('CMI Score:', results.get('cmi_score', None))
 print('学習完了！')
 "
 fi

@@ -98,13 +98,11 @@ def calculate_cmi_score(y_pred, y_true, label_encoder=None, verbose=False):
             macro_f1 = f1_score(y_true_macro, y_pred_macro, average='macro', zero_division='warn')
             
         else:
-            # ラベルエンコーダーがない場合は、マルチクラス分類用のF1スコアを計算
+            # ラベルエンコーダーがない場合は、通常のF1スコアを計算
             if verbose:
-                print("Label encoderなし - マルチクラス分類用F1スコアを計算")
+                print("Label encoderなし - 数値ラベルで直接計算")
             
-            # マルチクラス分類ではbinaryは使用できないため、microまたはmacroを使用
-            # ここではmacroを使用（各クラスを平等に扱う）
-            binary_f1 = f1_score(y_true, y_pred, average='macro', zero_division='warn')
+            binary_f1 = f1_score(y_true, y_pred, average='binary', zero_division='warn')
             macro_f1 = f1_score(y_true, y_pred, average='macro', zero_division='warn')
         
         # 3. 最終スコア = Binary F1 + Macro F1の平均
