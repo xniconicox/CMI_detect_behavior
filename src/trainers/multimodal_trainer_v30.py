@@ -277,16 +277,15 @@ class MultimodalTrainerV30:
                 epochs=epochs,
                 batch_size=batch_size,
             )
-            if isinstance(result, tuple) and len(result) == 4:
+            if len(result) == 4:
                 model, history, f1, cmi_score = result
-            elif isinstance(result, tuple) and len(result) == 3:
-                model, history, f1 = result
-                cmi_score = float("nan")
             else:
-                raise ValueError("_train_fold must return 3 or 4 values")
+                model, history, f1 = result
+                cmi_score = 0.0
             fold_scores.append(f1)
             fold_cmi_scores.append(cmi_score)
-            fold_histories.append(history)
+            if history is not None:
+                fold_histories.append(history)
             
             # モデル保存
             model_path = self.model_dir / f"multimodal_model_v30_fold{fold}.keras"
@@ -580,5 +579,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"エラー: {e}")
 
-# Alias for tests
 MultimodalTrainer = MultimodalTrainerV30
