@@ -66,6 +66,7 @@ class MultimodalTrainerV31:
         # Add & ReLU
         y = keras.layers.Add()([y, shortcut])
         y = keras.layers.ReLU()(y)
+        y = keras.layers.SpatialDropout3D(0.2)(y)
         return y
 
     def load_all_data(self) -> Dict[str, np.ndarray]:
