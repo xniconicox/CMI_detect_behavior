@@ -89,6 +89,7 @@ class MultimodalTrainerV31:
         X_sensor = _load("train_windows")
         X_demo = _load("train_demographics")
         X_tab = _load("train_tabular")
+        X_tab = X_tab.astype(np.float32)
         X_tof = _load("train_tof_windows")
         y = _load("train_labels")
         info = _load("train_info")
