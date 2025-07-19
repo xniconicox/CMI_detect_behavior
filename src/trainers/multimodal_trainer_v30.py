@@ -451,11 +451,13 @@ class MultimodalTrainerV30:
             # 訓練データ
             ax = axes[i, 0]
             for fold, history in enumerate(fold_histories, 1):
+                if history is None:
+                    continue
                 if hasattr(history, 'history'):
                     hist = history.history
                 else:
                     hist = history
-                
+
                 if metric in hist:
                     ax.plot(hist[metric], label=f'Fold {fold}', alpha=0.7)
             
@@ -468,11 +470,13 @@ class MultimodalTrainerV30:
             # 検証データ
             ax = axes[i, 1]
             for fold, history in enumerate(fold_histories, 1):
+                if history is None:
+                    continue
                 if hasattr(history, 'history'):
                     hist = history.history
                 else:
                     hist = history
-                
+
                 val_metric = f'val_{metric}'
                 if val_metric in hist:
                     ax.plot(hist[val_metric], label=f'Fold {fold}', alpha=0.7)
@@ -560,6 +564,8 @@ class MultimodalTrainerV30:
         print(f"クロスバリデーション結果保存: {save_path}")
         plt.close()
 
+# テスト用の互換エイリアス
+MultimodalTrainer = MultimodalTrainerV30
 
 if __name__ == "__main__":
     trainer = MultimodalTrainerV30()

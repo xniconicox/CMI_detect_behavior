@@ -2,6 +2,9 @@
 
 IMUウィンドウ、人口統計、表形式特徴量、ToFボクセルの4種類の前処理済みデータを
 読み込んでタワー型のニューラルネットワークで学習を行う。
+少数クラスを考慮するため、``_train_fold`` では
+``sklearn.utils.class_weight.compute_class_weight`` を使ってクラス重みを計算し、
+``model.fit()`` に ``class_weight`` として渡す。
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from sklearn.model_selection import (
     StratifiedGroupKFold,
 )
 from sklearn.metrics import classification_report, f1_score
+from sklearn.utils.class_weight import compute_class_weight
 
 from src.utils.cmi_evaluation import calculate_cmi_score
 from src.utils.pipeline import Preprocessor
@@ -200,6 +204,9 @@ class MultimodalTrainerV31:
             num_classes=len(np.unique(y)),
             use_attention=use_attention,
         )
+        classes = np.unique(y)
+        weights = compute_class_weight(class_weight="balanced", classes=classes, y=y[train_idx])
+        class_weight = {cls: w for cls, w in zip(classes, weights)}
         history = model.fit(
             [X_s[train_idx], X_d[train_idx], X_t[train_idx], X_f[train_idx]],
             y[train_idx],
@@ -209,6 +216,7 @@ class MultimodalTrainerV31:
             ),
             epochs=epochs,
             batch_size=batch_size,
+            class_weight=class_weight,
             callbacks=[keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True)],
             verbose=1,
         )
