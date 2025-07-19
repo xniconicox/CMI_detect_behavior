@@ -318,7 +318,8 @@ class MultimodalTrainerV30:
         self.cv_results = cv_results
         
         # 学習曲線とクロスバリデーション結果をプロット
-        self.plot_training_curves(fold_histories)
+        valid_histories = [h for h in fold_histories if h is not None]
+        self.plot_training_curves(valid_histories)
         self.plot_cross_validation_results(cv_results)
         
         return cv_results
@@ -578,5 +579,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"エラー: {e}")
 
-# テスト互換用エイリアス
 MultimodalTrainer = MultimodalTrainerV30
