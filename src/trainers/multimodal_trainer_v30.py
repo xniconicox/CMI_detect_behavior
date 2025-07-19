@@ -277,11 +277,13 @@ class MultimodalTrainerV30:
                 epochs=epochs,
                 batch_size=batch_size,
             )
-            if len(result) == 4:
+            if isinstance(result, tuple) and len(result) == 4:
                 model, history, f1, cmi_score = result
-            else:
+            elif isinstance(result, tuple) and len(result) == 3:
                 model, history, f1 = result
-                cmi_score = 0.0
+                cmi_score = float("nan")
+            else:
+                raise ValueError("_train_fold must return 3 or 4 values")
             fold_scores.append(f1)
             fold_cmi_scores.append(cmi_score)
             fold_histories.append(history)
@@ -451,11 +453,13 @@ class MultimodalTrainerV30:
             # 訓練データ
             ax = axes[i, 0]
             for fold, history in enumerate(fold_histories, 1):
+                if history is None:
+                    continue
                 if hasattr(history, 'history'):
                     hist = history.history
                 else:
                     hist = history
-                
+
                 if metric in hist:
                     ax.plot(hist[metric], label=f'Fold {fold}', alpha=0.7)
             
@@ -468,11 +472,13 @@ class MultimodalTrainerV30:
             # 検証データ
             ax = axes[i, 1]
             for fold, history in enumerate(fold_histories, 1):
+                if history is None:
+                    continue
                 if hasattr(history, 'history'):
                     hist = history.history
                 else:
                     hist = history
-                
+
                 val_metric = f'val_{metric}'
                 if val_metric in hist:
                     ax.plot(hist[val_metric], label=f'Fold {fold}', alpha=0.7)
@@ -560,6 +566,8 @@ class MultimodalTrainerV30:
         print(f"クロスバリデーション結果保存: {save_path}")
         plt.close()
 
+# テスト用の互換エイリアス
+MultimodalTrainer = MultimodalTrainerV30
 
 if __name__ == "__main__":
     trainer = MultimodalTrainerV30()
