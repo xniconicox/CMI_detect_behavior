@@ -9,7 +9,7 @@ set -e  # エラー時に停止
 # 設定変数（必要に応じて変更してください）
 # ============================================================
 
-EXPERIMENT_NAME="exp1"                 # 実験名
+EXPERIMENT_NAME="preproc-v2"                 # 実験名
 CONFIG_PATH="config/config_v2.yaml"    # 設定ファイルパス
 USE_CACHE=false                         # キャッシュ利用
 MODE="train"                           # train または predict
@@ -33,7 +33,7 @@ fi
 # コマンド生成
 # ============================================================
 
-CMD=(python scripts/run_preprocessing.py)
+CMD=(python -m scripts.run_preprocessing)
 CMD+=(--experiment-name "$EXPERIMENT_NAME")
 CMD+=(--config "$CONFIG_PATH")
 CMD+=(--mode "$MODE")
