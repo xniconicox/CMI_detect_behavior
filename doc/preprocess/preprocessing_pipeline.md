@@ -22,16 +22,20 @@
      mean/std を計算する `compute_basic_statistics` を追加しました。
 7. **FFT バンドエネルギー**
    - `compute_fft_band_energy` で 0.5〜20Hz のバンド別エネルギーを算出します。
-8. **利き手反転正規化**
+8. **温度変化特徴**
+   - `compute_temperature_change_features` で温度センサーのフレーム差分を計算します。
+9. **ToF変化量特徴**
+   - `compute_tof_rate_of_change` で各深度の距離変化量を求めます。
+10. **利き手反転正規化**
    - `handedness_normalization` により左利きデータの Y/Z 軸を反転させます。
-9. **Wavelet 周波数特徴**
+11. **Wavelet 周波数特徴**
    - `compute_wavelet_features` により離散 Wavelet 変換の各バンドエネルギーを抽出します。
-10. **TDA 特徴量**
-    - `compute_persistence_image_features` で位相的特徴を画像化します（`giotto-tda` 使用）。
-11. **Auto‑Encoder 誤差**
-    - 事前学習済み AE モデルを渡して `compute_autoencoder_reconstruction_error` で再構成誤差を取得します。
-12. **ToF 3D Voxel 化**
-    - `tof_to_voxel_tensor` で ToF センサ 5 層 × 8×8 グリッドを時系列テンソルに整形します。
+12. **TDA 特徴量**
+   - `compute_persistence_image_features` で位相的特徴を画像化します（`giotto-tda` 使用）。
+13. **Auto‑Encoder 誤差**
+   - 事前学習済み AE モデルを渡して `compute_autoencoder_reconstruction_error` で再構成誤差を取得します。
+14. **ToF 3D Voxel 化**
+   - `tof_to_voxel_tensor` で ToF センサ 5 層 × 8×8 グリッドを時系列テンソルに整形します。
 
 これらの関数を学習・推論時に共通利用することで、前処理の再現性を高めています。
 

@@ -51,6 +51,8 @@
 - `compute_persistence_image_features` … 位相的特徴量 (Block G)　tda?
 - `compute_autoencoder_reconstruction_error` … AE再構成誤差 (Block H)
 - `compute_wavelet_features` … DWTバンドエネルギー (Block M)
+- `compute_temperature_change_features` … 温度センサ変化量
+- `compute_tof_rate_of_change` … ToF深度ごとの距離変化量
 
 ## 8. 欠損フラグ付与
 
