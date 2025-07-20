@@ -99,7 +99,6 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
     assert result["windows"].shape == (1, 16, 12)
     assert result["demographics"].shape == (1, 7)
     assert result["tabular"].shape == (1, 130)
-    assert result["tabular"].shape == (1, 132)
     assert result["tof_voxel"].shape == (len(df), 5, 8, 8)
     assert result["tof_windows"].shape == (1, 16, 5, 8, 8)
     assert result["labels"].shape == (1,)
