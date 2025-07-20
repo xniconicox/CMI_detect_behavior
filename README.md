@@ -238,7 +238,7 @@ params = {
 マルチモーダル学習スクリプトを使う場合は次のコマンドを実行します。
 
 ```bash
-bash scripts/run_multimodal_training_v30.sh
+bash scripts/run_multimodal_training_v31.sh
 ```
 
 ### 3. 結果の確認
