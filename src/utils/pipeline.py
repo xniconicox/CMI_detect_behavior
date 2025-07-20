@@ -22,6 +22,7 @@ from .preprocessing import (
     clean_sensor_missing_values,
     clean_missing_sensor_data_parallel_disk,
 )
+from .feature_engineering import add_missing_sensor_flags
 from .config_utils import load_config, get_cache_dir
 from .tof import tof_to_voxel_tensor
 from .feature_engineering import (
@@ -147,6 +148,10 @@ class TabularFeatureBuilder:
             Override config to compute wavelet features.
         use_tda : bool | None, optional
             Override config to compute TDA features.
+        autoencoder_model : optional
+            Pre-trained model used to compute reconstruction errors. The
+            object must implement ``predict`` and return reconstructed
+            windows with the same shape as the input.
         """
 
         md5 = df_md5(df)
@@ -202,6 +207,30 @@ class TabularFeatureBuilder:
             ).reshape(len(X_sensor), -1)
             feats.append(ae_err)
             
+        # --- 欠損センサフラグ (per-window mean) ----------------------
+        flag_cols = [
+            c
+            for c in [
+                "missing_flag_imu",
+                "missing_flag_thermal",
+                "missing_flag_tof",
+            ]
+            if c in df.columns
+        ]
+        if flag_cols:
+            grouped = {
+                (s, sid): g[flag_cols].to_numpy(float)
+                for (s, sid), g in df.groupby(["subject", "sequence_id"])
+            }
+            flags = []
+            for m in info:
+                arr = grouped[(m["subject"], m["sequence_id"])]
+                start = m["start_idx"]
+                end = min(m["end_idx"], arr.shape[0])
+                flags.append(arr[start:end].mean(axis=0))
+            flag_array = np.vstack(flags)
+            feats.append(flag_array)
+
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])
         final_nan_count = np.isnan(features).sum()
@@ -367,10 +396,20 @@ class Preprocessor:
             processed = clean_sensor_missing_values(
                 processed, self.sensor_type_groups
             )
+        # 欠損センサフラグを付与
+        flag_groups = {
+            "missing_flag_imu": self.sensor_type_groups.get("Accelerometer", [])
+            + self.sensor_type_groups.get("Rotation", []),
+            "missing_flag_thermal": self.sensor_type_groups.get("Thermal", []),
+            "missing_flag_tof": self.sensor_type_groups.get("ToF_Sensor", []),
+        }
+        processed = add_missing_sensor_flags(processed, flag_groups)
+
         if self.use_interp_cleaning:
             base_keep = self.config.get("demographics_cols", [])
             # Only include columns that exist in the dataframe
             keep = [col for col in base_keep + ["gesture"] if col in df.columns]
+            keep.extend(flag_groups.keys())
             processed = clean_missing_sensor_data_parallel_disk(
                 processed,
                 sensor_type_groups=self.sensor_type_groups,
@@ -505,6 +544,23 @@ class Preprocessor:
         *,
         autoencoder_model=None,
     ) -> "Preprocessor":
+        """Fit scalers using the provided dataframe.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw sensor dataframe.
+        use_cache : bool, default True
+            Reuse cached results when available.
+        autoencoder_model : optional
+            Pre-trained model for reconstruction error features. It must
+            implement ``predict`` and return reconstructed windows.
+
+        Returns
+        -------
+        Preprocessor
+            The fitted instance.
+        """
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
@@ -557,6 +613,23 @@ class Preprocessor:
         *,
         autoencoder_model=None,
     ) -> dict:
+        """Transform dataframe using fitted scalers.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw sensor dataframe.
+        use_cache : bool, default True
+            Reuse cached results when available.
+        autoencoder_model : optional
+            Pre-trained model used for reconstruction error features. The
+            object must provide ``predict`` returning reconstructed windows.
+
+        Returns
+        -------
+        dict
+            Dictionary containing processed arrays.
+        """
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
         logger.info("Transforming dataframe of shape %s", df.shape)
@@ -646,6 +719,26 @@ class Preprocessor:
         return self.transform(
             df, use_cache=use_cache, autoencoder_model=autoencoder_model
         )
+        """Fit the preprocessor and transform the data in one call.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw sensor dataframe.
+        use_cache : bool, default True
+            Reuse cached results when available.
+        autoencoder_model : optional
+            Pre-trained model with ``predict`` returning reconstructed
+            windows.
+
+        Returns
+        -------
+        dict
+            Dictionary of processed arrays.
+        """
+
+        self.fit(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
+        return self.transform(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
 
     def save(self, path: Path) -> None:
         """Save scaler objects and settings to a pickle file."""
