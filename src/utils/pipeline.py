@@ -41,13 +41,14 @@ from .imu import add_world_acc_features
 logger = logging.getLogger(__name__)
 
 class WindowTensorBuilder:
-    """Generate IMU window tensors with demographics for multiple sizes."""
+    """Generate IMU window tensors with demographics."""
 
+    # def __init__(self, config: dict | None = None) -> None:
     def __init__(self, config: dict | None = None, mode: str = "train") -> None:
         self.config = config or load_config()
         self.mode = mode
         pp = self.config.get("preprocessing", {})
-        self.window_lens = pp.get("window_lens") or [pp.get("window_size", 128)]
+        self.window_size = pp.get("window_size", 128)
         self.stride = pp.get("stride", 64)
         self.min_len = pp.get("min_sequence_length", 10)
         self.padding_value = pp.get("padding_value", 0.0)
@@ -63,54 +64,45 @@ class WindowTensorBuilder:
         
         self.demographics_cols = self.config.get("demographics_cols", [])
         self.cache_dir = get_cache_dir(self.config)
-        self.cache_files = {
-            l: self.cache_dir / f"windows_{l}.pkl" for l in self.window_lens
-        }
-        self.meta_files = {
-            l: self.cache_dir / f"windows_{l}_meta.json" for l in self.window_lens
-        }
+        self.cache_file = self.cache_dir / "windows.pkl"
+        self.meta_file = self.cache_dir / "windows_meta.json"
         self.cache_dir.mkdir(exist_ok=True)
 
     def build(self, df: pd.DataFrame, use_cache: bool = True):
         logger.info(
-            "Building windows (lens=%s, stride=%d, min_len=%d)",
-            self.window_lens,
+            "Building windows (size=%d, stride=%d, min_len=%d)",
+            self.window_size,
             self.stride,
             self.min_len,
         )
         md5 = df_md5(df)
-        results: dict[int, tuple] = {}
-        for l in self.window_lens:
-            c_file = self.cache_files[l]
-            m_file = self.meta_files[l]
-            if use_cache and c_file.exists() and m_file.exists():
-                meta = json.loads(m_file.read_text())
-                if meta.get("md5") == md5:
-                    logger.info("Reusing cached windows from %s", c_file)
-                    with open(c_file, "rb") as f:
-                        results[l] = pickle.load(f)
-                    continue
+        if use_cache and self.cache_file.exists() and self.meta_file.exists():
+            meta = json.loads(self.meta_file.read_text())
+            if meta.get("md5") == md5:
+                logger.info("Reusing cached windows from %s", self.cache_file)
+                with open(self.cache_file, "rb") as f:
+                    return pickle.load(f)
 
-            result = create_sliding_windows_with_demographics(
-                df,
-                window_size=l,
-                stride=self.stride,
-                sensor_cols=self.sensor_cols,
-                demographics_cols=self.demographics_cols,
-                min_sequence_length=self.min_len,
-                padding_value=self.padding_value,
-            )
-            if use_cache:
-                with open(c_file, "wb") as f:
-                    pickle.dump(result, f)
-                m_file.write_text(json.dumps({"md5": md5}))
-            results[l] = result
-            logger.info(
-                "Windows length %d shape %s",
-                l,
-                result[0].shape,
-            )
-        return results
+        result = create_sliding_windows_with_demographics(
+            df,
+            window_size=self.window_size,
+            stride=self.stride,
+            sensor_cols=self.sensor_cols,
+            demographics_cols=self.demographics_cols,
+            min_sequence_length=self.min_len,
+            padding_value=self.padding_value,
+        )
+        if use_cache:
+            with open(self.cache_file, "wb") as f:
+                pickle.dump(result, f)
+            self.meta_file.write_text(json.dumps({"md5": md5}))
+        logger.info(
+            "Windows shapes: X_sensor=%s, X_demo=%s, y=%s",
+            result[0].shape,
+            result[1].shape,
+            result[2].shape,
+        )
+        return result
 
 
 class TabularFeatureBuilder:
@@ -197,67 +189,65 @@ class TabularFeatureBuilder:
                     return pickle.load(f)
 
         if windows is None:
-            window_dict = self.window_builder.build(df, use_cache=use_cache)
+            X_sensor, X_demo, y, info = self.window_builder.build(df, use_cache=use_cache)
         else:
-            window_dict = windows
+            X_sensor, X_demo, y, info = windows
+            
+        # # NaN値チェックと処理
+        # nan_count = np.isnan(X_sensor).sum()
+        # if nan_count > 0:
+        #     logger.warning(f"TabularFeatureBuilder: NaN値 {nan_count} 個を検出、0.0に置換")
+        #     X_sensor = np.nan_to_num(X_sensor, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+        stats = compute_basic_statistics(X_sensor)
+        peaks = compute_peak_features(X_sensor)
+        fft = compute_fft_band_energy(
+            X_sensor, fs=self.sampling_rate, bands=self.fft_bands
+        )
 
-        results = {}
-        for win_len, win_data in window_dict.items():
-            X_sensor, X_demo, y, info = win_data
-
-            stats = compute_basic_statistics(X_sensor)
-            peaks = compute_peak_features(X_sensor)
-            fft = compute_fft_band_energy(
-                X_sensor, fs=self.sampling_rate, bands=self.fft_bands
+        # decide whether to compute optional features
+        feats = [stats, peaks, fft]
+        if self.use_temp_change and self._thm_slice.stop > self._thm_slice.start:
+            temp = compute_temperature_change_features(
+                X_sensor[:, :, self._thm_slice]
             )
+            feats.append(temp)
+        if self.use_tof_rate:
+            tof_windows, _ = self.tof_window_builder.build(df, use_cache=use_cache)
+            tof_chg = compute_tof_rate_of_change(tof_windows)
+            feats.append(tof_chg)
+        if use_wavelet:
+            wave = compute_wavelet_features(
+                X_sensor, wavelet=self.wavelet, level=self.wavelet_level
+            )
+            feats.append(wave)
+        if use_tda:
+            tda = compute_persistence_image_features_batch(
+                X_sensor,
+                dimension=self.tda_dimension,
+                n_bins=self.tda_bins,
+                sigma=self.tda_sigma,
+            )
+            feats.append(tda)
+        if self.ae_model_path:
+            model = self._load_ae_model()
+            ae_err = compute_autoencoder_reconstruction_error(X_sensor, model)
+            feats.append(ae_err)
 
-            feats = [stats, peaks, fft]
-            if self.use_temp_change and self._thm_slice.stop > self._thm_slice.start:
-                temp = compute_temperature_change_features(
-                    X_sensor[:, :, self._thm_slice]
-                )
-                feats.append(temp)
-            if self.use_tof_rate:
-                tof_dict = self.tof_window_builder.build(df, use_cache=use_cache)
-                tof_windows, _ = tof_dict.get(win_len, (None, None))
-                if tof_windows is not None:
-                    tof_chg = compute_tof_rate_of_change(tof_windows)
-                    feats.append(tof_chg)
-            if use_wavelet:
-                wave = compute_wavelet_features(
-                    X_sensor, wavelet=self.wavelet, level=self.wavelet_level
-                )
-                feats.append(wave)
-            if use_tda:
-                tda = compute_persistence_image_features_batch(
-                    X_sensor,
-                    dimension=self.tda_dimension,
-                    n_bins=self.tda_bins,
-                    sigma=self.tda_sigma,
-                )
-                feats.append(tda)
-            if self.ae_model_path:
-                model = self._load_ae_model()
-                ae_err = compute_autoencoder_reconstruction_error(X_sensor, model)
-                feats.append(ae_err)
-
-            features = np.hstack(feats + [X_demo])
-            final_nan_count = np.isnan(features).sum()
-            if final_nan_count > 0:
-                logger.warning(
-                    f"TabularFeatureBuilder: 最終特徴量にNaN値 {final_nan_count} 個を検出、0.0に置換"
-                )
-                features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
-            results[win_len] = (features, y, info)
-
+        # 最終的なNaN値チェック
+        features = np.hstack(feats + [X_demo])
+        final_nan_count = np.isnan(features).sum()
+        if final_nan_count > 0:
+            logger.warning(f"TabularFeatureBuilder: 最終特徴量にNaN値 {final_nan_count} 個を検出、0.0に置換")
+            features = np.nan_to_num(features, nan=0.0, posinf=1.0, neginf=-1.0)
+        result = (features, y, info)
         if use_cache:
             with open(self.cache_file, "wb") as f:
-                pickle.dump(results, f)
+                pickle.dump(result, f)
             meta = {"md5": md5, "ae_model_path": self.ae_model_path}
             self.meta_file.write_text(json.dumps(meta))
-        for l, r in results.items():
-            logger.info("Tabular features len %d shape %s", l, r[0].shape)
-        return results
+        logger.info("Tabular features shape %s", result[0].shape)
+        return result
 
 
 class ToFVoxelBuilder:
@@ -302,7 +292,7 @@ class ToFWindowBuilder:
     def __init__(self, config: dict | None = None) -> None:
         self.config = config or load_config()
         pp = self.config.get("preprocessing", {})
-        self.window_lens = pp.get("window_lens") or [pp.get("window_size", 128)]
+        self.window_size = pp.get("window_size", 128)
         self.stride = pp.get("stride", 64)
         self.min_len = pp.get("min_sequence_length", 10)
         self.fill_value = pp.get("padding_value", 0.0)
@@ -311,46 +301,39 @@ class ToFWindowBuilder:
         w = pp.get("tof_width", 8)
         self.tof_cols = [f"tof_{d}_v{i}" for d in range(1, depth + 1) for i in range(h * w)]
         self.cache_dir = get_cache_dir(self.config)
-        self.cache_files = {l: self.cache_dir / f"tof_windows_{l}.pkl" for l in self.window_lens}
-        self.meta_files = {l: self.cache_dir / f"tof_windows_{l}_meta.json" for l in self.window_lens}
+        self.cache_file = self.cache_dir / "tof_windows.pkl"
+        self.meta_file = self.cache_dir / "tof_windows_meta.json"
         self.cache_dir.mkdir(exist_ok=True)
 
     def build(self, df: pd.DataFrame, use_cache: bool = True):
         logger.info(
-            "Building ToF windows (lens=%s, stride=%d, min_len=%d)",
-            self.window_lens,
+            "Building ToF windows (size=%d, stride=%d, min_len=%d)",
+            self.window_size,
             self.stride,
             self.min_len,
         )
         md5 = df_md5(df)
-        results = {}
-        for l in self.window_lens:
-            c_file = self.cache_files[l]
-            m_file = self.meta_files[l]
-            if use_cache and c_file.exists() and m_file.exists():
-                meta = json.loads(m_file.read_text())
-                if meta.get("md5") == md5:
-                    logger.info("Reusing cached ToF windows from %s", c_file)
-                    with open(c_file, "rb") as f:
-                        results[l] = pickle.load(f)
-                    continue
+        if use_cache and self.cache_file.exists() and self.meta_file.exists():
+            meta = json.loads(self.meta_file.read_text())
+            if meta.get("md5") == md5:
+                logger.info("Reusing cached ToF windows from %s", self.cache_file)
+                with open(self.cache_file, "rb") as f:
+                    return pickle.load(f)
 
-            result = create_tof_windows_with_info(
-                df,
-                window_size=l,
-                stride=self.stride,
-                tof_cols=self.tof_cols,
-                min_sequence_length=self.min_len,
-                fill_value=self.fill_value,
-            )
-            if use_cache:
-                with open(c_file, "wb") as f:
-                    pickle.dump(result, f)
-                m_file.write_text(json.dumps({"md5": md5}))
-            results[l] = result
-            logger.info("ToF windows len %d shape %s", l, result[0].shape)
-
-        return results
+        result = create_tof_windows_with_info(
+            df,
+            window_size=self.window_size,
+            stride=self.stride,
+            tof_cols=self.tof_cols,
+            min_sequence_length=self.min_len,
+            fill_value=self.fill_value,
+        )
+        if use_cache:
+            with open(self.cache_file, "wb") as f:
+                pickle.dump(result, f)
+            self.meta_file.write_text(json.dumps({"md5": md5}))
+        logger.info("ToF windows shape %s", result[0].shape)
+        return result
 
 
 class Preprocessor:
@@ -575,17 +558,8 @@ class Preprocessor:
     def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
-        window_dict = self.win_builder.build(df_proc, use_cache=use_cache)
-        first_len = sorted(window_dict.keys())[0]
-        X_sensor, X_demo, y, _ = window_dict[first_len]
-
-        cleaned_windows = {}
-        for l, (xs, xd, yl, info) in window_dict.items():
-            xs_clean = self._handle_missing_values_by_sensor_type(xs)
-            cleaned_windows[l] = (xs_clean, xd, yl, info)
-            if l == first_len:
-                X_sensor_clean = xs_clean
-                X_demo_first = xd
+        windows = self.win_builder.build(df_proc, use_cache=use_cache)
+        X_sensor, X_demo, y, _ = windows
         
         # ラベルエンコーディング
         if "gesture" in df.columns:
@@ -596,21 +570,21 @@ class Preprocessor:
             logger.info(f"ラベルマッピング: {dict(zip(self.label_encoder.classes_, range(len(self.label_encoder.classes_))))}")
         
         # センサー別の適切な欠損値処理
+        X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
         logger.info("Window tensor shape %s", X_sensor_clean.shape)
         self.sensor_scaler.fit(X_sensor_clean.reshape(-1, X_sensor_clean.shape[-1]))
     
         
         # 人口統計データの正規化
-        X_demo_clean = np.nan_to_num(X_demo_first, nan=0.0)
+        X_demo_clean = np.nan_to_num(X_demo, nan=0.0)
         self.demo_scaler.fit(X_demo_clean)
         
         # 表形式特徴量の正規化
-        processed_windows = cleaned_windows
-        tab_dict = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
-        tab_first = tab_dict[first_len][0]
-        tab_clean = np.nan_to_num(tab_first, nan=0.0)
+        processed_windows = (X_sensor_clean, X_demo, y, windows[3])
+        tab, _, _ = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
+        tab_clean = np.nan_to_num(tab, nan=0.0)
         self.tab_scaler.fit(tab_clean)
-        logger.info("Tabular features shape %s", tab_first.shape)
+        logger.info("Tabular features shape %s", tab.shape)
         
         # === ToF正規化パラメータ計算 ===
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
@@ -627,26 +601,27 @@ class Preprocessor:
             raise RuntimeError("Preprocessor is not fitted")
         logger.info("Transforming dataframe of shape %s", df.shape)
         df_proc = self._maybe_clean(df)
-        window_dict = self.win_builder.build(df_proc, use_cache=use_cache)
-        first_len = sorted(window_dict.keys())[0]
-        X_sensor, X_demo, y, info = window_dict[first_len]
-        cleaned_windows = {}
-        X_sensor_norm_dict = {}
-        X_demo_norm_dict = {}
-        for l, (xs, xd, yl, inf) in window_dict.items():
-            xs_clean = self._handle_missing_values_by_sensor_type(xs)
-            xs_norm = self.sensor_scaler.transform(xs_clean.reshape(-1, xs_clean.shape[-1])).reshape(xs_clean.shape)
-            xd_clean = np.nan_to_num(xd, nan=0.0)
-            xd_norm = self.demo_scaler.transform(xd_clean)
-            X_sensor_norm_dict[l] = xs_norm
-            X_demo_norm_dict[l] = xd_norm
-            cleaned_windows[l] = (xs_clean, xd, yl, inf)
+        windows = self.win_builder.build(df_proc, use_cache=use_cache)
+        X_sensor, X_demo, y, info = windows
         
         # センサー別の適切な欠損値処理、正規化
         logger.info("Window tensor shape %s", X_sensor.shape)
+        X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
+        X_sensor_normalized = self.sensor_scaler.transform(
+            X_sensor_clean.reshape(-1, X_sensor_clean.shape[-1])
+        ).reshape(X_sensor_clean.shape)
+        
+        # 人口統計データの正規化
+        X_demo_clean = np.nan_to_num(X_demo, nan=0.0)
+        X_demo_normalized = self.demo_scaler.transform(X_demo_clean)
+        
         # 表形式特徴量の正規化
-        tab_dict = self.tab_builder.build(df_proc, windows=cleaned_windows, use_cache=use_cache)
-        tab_normalized = {l: self.tab_scaler.transform(t[0]) for l, t in tab_dict.items()}
+        processed_windows = (X_sensor_clean, X_demo, y, info)
+        tab, _, _ = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
+        # nan_count = np.isnan(tab).sum()
+        # logger.info(f"NaNの数: {nan_count}")
+        # tab_clean = np.nan_to_num(tab, nan=0.0)
+        tab_normalized = self.tab_scaler.transform(tab)
         
         # === ToF正規化 ===
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
@@ -656,19 +631,21 @@ class Preprocessor:
             tof_tensor_norm[mask] = (tof_tensor[mask] - self.tof_mean) / self.tof_std
         else:
             tof_tensor_norm = tof_tensor  # 正規化できない場合はそのまま
-        tof_win_dict = self.tof_win_builder.build(df_proc, use_cache=use_cache)
-        tof_windows_norm = {}
-        for l, (tw, _) in tof_win_dict.items():
-            mask_win = (tw != -1)
-            tw_norm = np.zeros_like(tw)
-            if hasattr(self, "tof_mean") and hasattr(self, "tof_std") and self.tof_std > 0:
-                tw_norm[mask_win] = (tw[mask_win] - self.tof_mean) / self.tof_std
-            else:
-                tw_norm = tw
-            tof_windows_norm[l] = tw_norm
+        tof_windows, _ = self.tof_win_builder.build(df_proc, use_cache=use_cache)
+        mask_win = (tof_windows != -1)
+        tof_windows_norm = np.zeros_like(tof_windows)
+        if hasattr(self, "tof_mean") and hasattr(self, "tof_std") and self.tof_std > 0:
+            tof_windows_norm[mask_win] = (tof_windows[mask_win] - self.tof_mean) / self.tof_std
+        else:
+            tof_windows_norm = tof_windows
             
         logger.info(
-            "Output lens: %s", list(window_dict.keys())
+            "Output shapes: windows=%s, demographics=%s, tabular=%s, tof=%s, tof_win=%s",
+            X_sensor.shape,
+            X_demo.shape,
+            tab.shape,
+            tof_tensor.shape,
+            tof_windows.shape,
         )
         # ラベルエンコーディングの適用
         if hasattr(self, "label_encoder") and y is not None:
@@ -684,11 +661,11 @@ class Preprocessor:
             y_encoded = y
         
         return {
-            "windows": X_sensor_norm_dict,
-            "demographics": X_demo_norm_dict,
+            "windows": X_sensor_normalized,
+            "demographics": X_demo_normalized,
             "tabular": tab_normalized,
-            "tof_voxel": tof_tensor_norm,
-            "tof_windows": tof_windows_norm,
+            "tof_voxel": tof_tensor_norm,  # 正規化済みデータを使用
+            "tof_windows": tof_windows_norm,  # 正規化済みデータを使用
             "labels": y_encoded,
             "info": info,
         }

@@ -6,8 +6,7 @@ ae_model_path: null
 # preprocessing hyperparameters
 preprocessing:
   window_size: 128
-  window_lens: [64, 128]
-  stride: 32
+  stride: 64
   min_sequence_length: 20
   padding_value: 0.0
   sampling_rate: 50.0

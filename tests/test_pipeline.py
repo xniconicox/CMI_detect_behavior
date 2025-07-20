@@ -102,11 +102,10 @@ def test_window_tensor_builder(tmp_path: Path):
     builder = WindowTensorBuilder(cfg)
 
     result = builder.build(df)
-    assert isinstance(result, dict)
-    assert 16 in result
+    assert isinstance(result, tuple) and len(result) == 4
 
-    windows, demos, labels, info = result[16]
-    assert windows.shape == (1, cfg["preprocessing"].get("window_size"), 12)
+    windows, demos, labels, info = result
+    assert windows.shape == (1, cfg["preprocessing"]["window_size"], 12)
     assert demos.shape == (1, 7)
     assert labels.shape == (1,)
     assert len(info) == 1
@@ -118,18 +117,7 @@ def test_window_tensor_builder(tmp_path: Path):
     result_cached = builder.build(df)
     md5_second = json.loads(builder.meta_file.read_text())["md5"]
     assert md5_first == md5_second
-    np.testing.assert_allclose(result[16][0], result_cached[16][0])
-
-
-def test_window_tensor_builder_multi(tmp_path: Path):
-    cfg = make_config(tmp_path)
-    cfg["preprocessing"]["window_lens"] = [8, 16]
-    df = make_dummy_df(20)
-    builder = WindowTensorBuilder(cfg)
-    res = builder.build(df)
-    assert set(res.keys()) == {8, 16}
-    assert res[8][0].shape[1] == 8
-    assert res[16][0].shape[1] == 16
+    np.testing.assert_allclose(result[0], result_cached[0])
 
 
 def test_tabular_feature_builder(tmp_path: Path):
@@ -140,20 +128,19 @@ def test_tabular_feature_builder(tmp_path: Path):
     win_builder = WindowTensorBuilder(cfg)
     windows = win_builder.build(df)
     tab_builder = TabularFeatureBuilder(cfg)
-    tab_dict = tab_builder.build(df, windows=windows)
-    tab, labels, info = tab_dict[16]
+    tab, labels, info = tab_builder.build(df, windows=windows)
 
-    assert tab.shape[0] == 1
+    assert tab.shape == (1, 139)
     assert labels.shape == (1,)
     assert len(info) == 1
 
     assert tab_builder.cache_file.exists()
     assert tab_builder.meta_file.exists()
     md5_first = json.loads(tab_builder.meta_file.read_text())["md5"]
-    tab_cached = tab_builder.build(df, windows=windows)
+    tab_cached, _, _ = tab_builder.build(df, windows=windows)
     md5_second = json.loads(tab_builder.meta_file.read_text())["md5"]
     assert md5_first == md5_second
-    np.testing.assert_allclose(tab, tab_cached[16][0])
+    np.testing.assert_allclose(tab, tab_cached)
 
 
 def test_tabular_feature_builder_with_ae(tmp_path: Path, monkeypatch):
@@ -176,8 +163,9 @@ def test_tabular_feature_builder_with_ae(tmp_path: Path, monkeypatch):
     win_builder = WindowTensorBuilder(cfg)
     windows = win_builder.build(df)
     tab_builder = TabularFeatureBuilder(cfg)
-    tab = tab_builder.build(df, windows=windows)
-    assert tab[16][0].shape[0] == 1
+    tab, _, _ = tab_builder.build(df, windows=windows)
+
+    assert tab.shape == (1, 130)
 
 
 def test_tof_voxel_builder(tmp_path: Path):
@@ -200,8 +188,7 @@ def test_tof_window_builder(tmp_path: Path):
     df = make_dummy_df()
     builder = ToFWindowBuilder(cfg)
 
-    result = builder.build(df)
-    windows, info = result[16]
+    windows, info = builder.build(df)
 
     depth = cfg["preprocessing"]["tof_depth"]
     h = cfg["preprocessing"]["tof_height"]
@@ -212,7 +199,7 @@ def test_tof_window_builder(tmp_path: Path):
     assert builder.cache_file.exists()
     assert builder.meta_file.exists()
     md5_first = json.loads(builder.meta_file.read_text())["md5"]
-    win_cached = builder.build(df)[16][0]
+    win_cached, info_cached = builder.build(df)
     md5_second = json.loads(builder.meta_file.read_text())["md5"]
     assert md5_first == md5_second
     np.testing.assert_allclose(windows, win_cached)
@@ -230,7 +217,8 @@ def test_preprocessor_save_load(tmp_path: Path):
     loaded = Preprocessor.load(pkl)
     out = loaded.transform(df)
 
-    for key in ["windows", "demographics", "tabular"]:
-        for k in orig[key].keys():
-            np.testing.assert_allclose(orig[key][k], out[key][k])
-    np.testing.assert_allclose(orig["tof_voxel"], out["tof_voxel"])
+    for key in ["windows", "demographics", "tabular", "tof_voxel"]:
+        np.testing.assert_allclose(orig[key], out[key])
+
+    for path in pp.cache_files.values():
+        assert path.exists()

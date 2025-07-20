@@ -90,8 +90,7 @@ class MultimodalTrainerV31:
         X_sensor = _load("train_windows")
         X_demo = _load("train_demographics")
         X_tab = _load("train_tabular")
-        if isinstance(X_tab, np.ndarray):
-            X_tab = X_tab.astype(np.float32)
+        X_tab = X_tab.astype(np.float32)
         X_tof = _load("train_tof_windows")
         y = _load("train_labels")
         info = _load("train_info")
@@ -103,22 +102,10 @@ class MultimodalTrainerV31:
         else:
             groups = np.asarray(info)
 
-        if isinstance(X_sensor, dict):
-            print(f"センサー: { {k: v.shape for k,v in X_sensor.items()} }")
-        else:
-            print(f"センサー: {X_sensor.shape}")
-        if isinstance(X_demo, dict):
-            print(f"人口統計: { {k: v.shape for k,v in X_demo.items()} }")
-        else:
-            print(f"人口統計: {X_demo.shape}")
-        if isinstance(X_tab, dict):
-            print(f"表形式: { {k: v.shape for k,v in X_tab.items()} }")
-        else:
-            print(f"表形式: {X_tab.shape}")
-        if isinstance(X_tof, dict):
-            print(f"ToF: { {k: v.shape for k,v in X_tof.items()} }")
-        else:
-            print(f"ToF: {X_tof.shape}")
+        print(f"センサー: {X_sensor.shape}")
+        print(f"人口統計: {X_demo.shape}")
+        print(f"表形式: {X_tab.shape}")
+        print(f"ToF: {X_tof.shape}")
         print(f"ラベル: {y.shape}")
         print(f"グループ数: {len(groups)}")
 
@@ -133,37 +120,19 @@ class MultimodalTrainerV31:
 
     def build_multimodal_model(
         self,
-        sensor_shape,
+        sensor_shape: tuple,
         demo_shape: int,
         tab_shape: int,
-        tof_shape,
+        tof_shape: tuple,
         num_classes: int,
         *,
         use_attention: bool = False,
-        share_mode: str = "shared",
     ) -> keras.Model:
         """タワー型統合ネットワークを構築"""
         # 1. IMU Tower (Bidirectional LSTM)
-        sensor_inputs = []
-        sensor_feats = []
-        if isinstance(sensor_shape, dict):
-            if share_mode == "shared":
-                shared_lstm = keras.layers.Bidirectional(keras.layers.LSTM(64))
-            for k, shp in sensor_shape.items():
-                inp = keras.Input(shape=shp, name=f"sensor_{k}")
-                x = keras.layers.Masking()(inp)
-                if share_mode == "shared":
-                    x = shared_lstm(x)
-                else:
-                    x = keras.layers.Bidirectional(keras.layers.LSTM(64))(x)
-                sensor_inputs.append(inp)
-                sensor_feats.append(x)
-            x1 = keras.layers.Average()(sensor_feats) if share_mode == "shared" else keras.layers.concatenate(sensor_feats)
-        else:
-            inp = keras.Input(shape=sensor_shape, name="sensor")
-            x1 = keras.layers.Masking()(inp)
-            x1 = keras.layers.Bidirectional(keras.layers.LSTM(64))(x1)
-            sensor_inputs.append(inp)
+        sensor_input = keras.Input(shape=sensor_shape, name="sensor")
+        x1 = keras.layers.Masking()(sensor_input)
+        x1 = keras.layers.Bidirectional(keras.layers.LSTM(64))(x1)
 
         # 2. Demographics Tower
         demo_input = keras.Input(shape=(demo_shape,), name="demo")
@@ -176,27 +145,12 @@ class MultimodalTrainerV31:
         x3 = keras.layers.Add()([x3_base, x3_res])
 
         # 4. ToF Tower (3D ResNet)
-        tof_inputs = []
-        tof_feats = []
-        if isinstance(tof_shape, dict):
-            for k, shp in tof_shape.items():
-                inp = keras.Input(shape=shp, name=f"tof_{k}")
-                x = self._resnet_block_3d(inp, filters=16, stride=2)
-                x = self._resnet_block_3d(x, filters=32, stride=2)
-                if use_attention:
-                    x = keras.layers.SpatialDropout3D(0.2)(x)
-                x = keras.layers.GlobalAveragePooling3D()(x)
-                tof_inputs.append(inp)
-                tof_feats.append(x)
-            x4 = keras.layers.Average()(tof_feats)
-        else:
-            inp = keras.Input(shape=tof_shape, name="tof")
-            x4 = self._resnet_block_3d(inp, filters=16, stride=2)
-            x4 = self._resnet_block_3d(x4, filters=32, stride=2)
-            if use_attention:
-                x4 = keras.layers.SpatialDropout3D(0.2)(x4)
-            x4 = keras.layers.GlobalAveragePooling3D()(x4)
-            tof_inputs.append(inp)
+        tof_input = keras.Input(shape=tof_shape, name="tof")
+        x4 = self._resnet_block_3d(tof_input, filters=16, stride=2)
+        x4 = self._resnet_block_3d(x4, filters=32, stride=2)
+        if use_attention:
+            x4 = keras.layers.SpatialDropout3D(0.2)(x4)
+        x4 = keras.layers.GlobalAveragePooling3D()(x4)
 
         if use_attention:
             # IMU と ToF 特徴量間でアテンションを計算
@@ -211,8 +165,9 @@ class MultimodalTrainerV31:
         merged = keras.layers.Dropout(0.3)(merged)
         output = keras.layers.Dense(num_classes, activation="softmax")(merged)
 
-        model_inputs = sensor_inputs + [demo_input, tab_input] + tof_inputs
-        model = keras.Model(inputs=model_inputs, outputs=output)
+        model = keras.Model(
+            inputs=[sensor_input, demo_input, tab_input, tof_input], outputs=output
+        )
 
         lr_schedule = keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=1e-3,
@@ -245,27 +200,22 @@ class MultimodalTrainerV31:
         use_attention: bool = False,
     ) -> tuple[keras.Model, keras.callbacks.History, float, float]:
         """単一foldでモデルを学習しF1スコアを返す"""
-        sensor_shape = {k: v.shape[1:] for k, v in X_s.items()} if isinstance(X_s, dict) else X_s.shape[1:]
-        tof_shape = {k: v.shape[1:] for k, v in X_f.items()} if isinstance(X_f, dict) else X_f.shape[1:]
         model = self.build_multimodal_model(
-            sensor_shape=sensor_shape,
+            sensor_shape=X_s.shape[1:],
             demo_shape=X_d.shape[1],
             tab_shape=X_t.shape[1],
-            tof_shape=tof_shape,
+            tof_shape=X_f.shape[1:],
             num_classes=len(np.unique(y)),
             use_attention=use_attention,
         )
         classes = np.unique(y)
         weights = compute_class_weight(class_weight="balanced", classes=classes, y=y[train_idx])
         class_weight = {cls: w for cls, w in zip(classes, weights)}
-        def _slice(arr, idx):
-            return [v[idx] for v in arr.values()] if isinstance(arr, dict) else [arr[idx]]
-
         history = model.fit(
-            _slice(X_s, train_idx) + [X_d[train_idx], X_t[train_idx]] + _slice(X_f, train_idx),
+            [X_s[train_idx], X_d[train_idx], X_t[train_idx], X_f[train_idx]],
             y[train_idx],
             validation_data=(
-                _slice(X_s, val_idx) + [X_d[val_idx], X_t[val_idx]] + _slice(X_f, val_idx),
+                [X_s[val_idx], X_d[val_idx], X_t[val_idx], X_f[val_idx]],
                 y[val_idx],
             ),
             epochs=epochs,
@@ -274,7 +224,7 @@ class MultimodalTrainerV31:
             callbacks=[keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True)],
             verbose=1,
         )
-        preds = model.predict(_slice(X_s, val_idx) + [X_d[val_idx], X_t[val_idx]] + _slice(X_f, val_idx))
+        preds = model.predict([X_s[val_idx], X_d[val_idx], X_t[val_idx], X_f[val_idx]])
         pred_labels = preds.argmax(axis=1)
         f1 = f1_score(y[val_idx], pred_labels, average="macro")
         
@@ -292,16 +242,10 @@ class MultimodalTrainerV31:
         use_attention: bool = False,
     ) -> keras.callbacks.History:
         print("=== データ型確認 ===")
-        if isinstance(data["sensor"], dict):
-            print(f"X_sensor lens: {list(data['sensor'].keys())}")
-        else:
-            print(f"X_sensor dtype: {data['sensor'].dtype}")
+        print(f"X_sensor dtype: {data['sensor'].dtype}")
         print(f"X_demo dtype: {data['demographics'].dtype}")
         print(f"X_tabular dtype: {data['tabular'].dtype}")
-        if isinstance(data['tof'], dict):
-            print(f"X_tof lens: {list(data['tof'].keys())}")
-        else:
-            print(f"X_tof dtype: {data['tof'].dtype}")
+        print(f"X_tof dtype: {data['tof'].dtype}")
         print(f"y dtype: {data['labels'].dtype}")
         print(f"y unique values: {np.unique(data['labels'])}")        
 
@@ -342,16 +286,10 @@ class MultimodalTrainerV31:
     ) -> Dict[str, Any]:
         """StratifiedGroupKFold を用いたクロスバリデーション学習"""
         print("=== データ型確認 ===")
-        if isinstance(data['sensor'], dict):
-            print(f"X_sensor lens: {list(data['sensor'].keys())}")
-        else:
-            print(f"X_sensor dtype: {data['sensor'].dtype}")
+        print(f"X_sensor dtype: {data['sensor'].dtype}")
         print(f"X_demo dtype: {data['demographics'].dtype}")
         print(f"X_tabular dtype: {data['tabular'].dtype}")
-        if isinstance(data['tof'], dict):
-            print(f"X_tof lens: {list(data['tof'].keys())}")
-        else:
-            print(f"X_tof dtype: {data['tof'].dtype}")
+        print(f"X_tof dtype: {data['tof'].dtype}")
         print(f"y dtype: {data['labels'].dtype}")
         print(f"y unique values: {np.unique(data['labels'])}")
 
