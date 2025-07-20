@@ -219,3 +219,6 @@ def test_preprocessor_save_load(tmp_path: Path):
 
     for key in ["windows", "demographics", "tabular", "tof_voxel"]:
         np.testing.assert_allclose(orig[key], out[key])
+
+    for path in pp.cache_files.values():
+        assert path.exists()
