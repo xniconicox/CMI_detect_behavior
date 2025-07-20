@@ -30,6 +30,8 @@ from .feature_engineering import (
     compute_fft_band_energy,
     compute_wavelet_features,
     compute_persistence_image_features_batch,
+    compute_tof_rate_of_change,
+    compute_temperature_change_features,
 )
 from .imu import add_world_acc_features
 
@@ -111,12 +113,21 @@ class TabularFeatureBuilder:
         self.fft_bands = pp.get("fft_bands", [])
         self.use_wavelet = pp.get("use_wavelet_features", False)
         self.use_tda = pp.get("use_tda_features", False)
+        self.use_tof_rate = pp.get("use_tof_rate_features", False)
+        self.use_temp_change = pp.get("use_temperature_change_features", False)
         self.wavelet = pp.get("wavelet", "db4")
         self.wavelet_level = pp.get("wavelet_level", 3)
         self.tda_dimension = pp.get("tda_dimension", 1)
         self.tda_bins = pp.get("tda_bins", 20)
         self.tda_sigma = pp.get("tda_sigma", 0.1)
         self.window_builder = WindowTensorBuilder(self.config)
+        self.tof_window_builder = ToFWindowBuilder(self.config)
+
+        acc_cols = self.config.get("sensor_acc_cols", [])
+        rot_cols = self.config.get("sensor_rot_cols", [])
+        thm_cols = self.config.get("sensor_thm_cols", [])
+        start = len(acc_cols) + len(rot_cols)
+        self._thm_slice = slice(start, start + len(thm_cols))
         self.cache_dir = get_cache_dir(self.config)
         self.cache_file = self.cache_dir / "tabular_features.pkl"
         self.meta_file = self.cache_dir / "tabular_meta.json"
@@ -181,6 +192,15 @@ class TabularFeatureBuilder:
 
         # decide whether to compute optional features
         feats = [stats, peaks, fft]
+        if self.use_temp_change and self._thm_slice.stop > self._thm_slice.start:
+            temp = compute_temperature_change_features(
+                X_sensor[:, :, self._thm_slice]
+            )
+            feats.append(temp)
+        if self.use_tof_rate:
+            tof_windows, _ = self.tof_window_builder.build(df, use_cache=use_cache)
+            tof_chg = compute_tof_rate_of_change(tof_windows)
+            feats.append(tof_chg)
         if use_wavelet:
             wave = compute_wavelet_features(
                 X_sensor, wavelet=self.wavelet, level=self.wavelet_level
