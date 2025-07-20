@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 if is_kaggle():
     # On Kaggle, the models and preprocessor are in the input directory
     MODEL_DIR = Path("/kaggle/input/cmi-v31/models")
-    PREPROCESSOR_PATH = Path("/kaggle/input/cmi-v31/models/preprocessor.pkl")
+    PREPROCESSOR_PATH = Path("/kaggle/input/cmi-v31/preprocessed/preprocessor.pkl")
 else:
     # Local execution: models are in the models subdirectory
     MODEL_DIR = Path("models")
-    PREPROCESSOR_PATH = Path("models/preprocessor.pkl")
+    PREPROCESSOR_PATH = Path("preprocessed/preprocessor.pkl")
 
 # 1. Preprocessor and model loading
 logger.info("Loading preprocessor and models...")

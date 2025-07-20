@@ -71,6 +71,8 @@ def make_config(tmp_path: Path) -> dict:
             "tda_sigma": 0.1,
             "use_wavelet_features": False,
             "use_tda_features": False,
+            "use_tof_rate_features": False,
+            "use_temperature_change_features": False,
             "tof_depth": 5,
             "tof_height": 8,
             "tof_width": 8,
@@ -117,13 +119,15 @@ def test_window_tensor_builder(tmp_path: Path):
 
 def test_tabular_feature_builder(tmp_path: Path):
     cfg = make_config(tmp_path)
+    cfg["preprocessing"]["use_tof_rate_features"] = True
+    cfg["preprocessing"]["use_temperature_change_features"] = True
     df = make_dummy_df()
     win_builder = WindowTensorBuilder(cfg)
     windows = win_builder.build(df)
     tab_builder = TabularFeatureBuilder(cfg)
     tab, labels, info = tab_builder.build(df, windows=windows)
 
-    assert tab.shape == (1, 129)
+    assert tab.shape == (1, 139)
     assert labels.shape == (1,)
     assert len(info) == 1
 
