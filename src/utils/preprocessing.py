@@ -48,12 +48,42 @@ def handedness_correction_v2(
     return df
 
 
+def handedness_correction_v2_reverse(
+    df: pd.DataFrame,
+    *,
+    imu_prefixes: Sequence[str] = ("acc", "gyro", "rot", "mag"),
+    apply_tof_mirror: bool = True,
+) -> pd.DataFrame:
+    """
+    右利き (handedness==1) サンプルを左利き座標系に正規化する。
+    handedness_correction_v2 の逆変換。
+    """
+    df = df.copy()
+    right = df["handedness"] == 1
+
+    # --- 1) IMU の Y/Z 反転（右利きのみ）------------------------------------------
+    axis_sign = {"x": 1, "y": -1, "z": -1, "w": 1}       # rot_w は 1
+    for pre in imu_prefixes:
+        axes = ("w", "x", "y", "z") if pre == "rot" else ("x", "y", "z")
+        for ax in axes:
+            col = f"{pre}_{ax}"
+            if col in df.columns:
+                df.loc[right, col] *= axis_sign[ax]
+
+    # --- 2) ToF 水平ミラー（右利きのみ）-------------------------------------------
+    if apply_tof_mirror:
+        tof_cols = [c for c in df.columns if c.startswith("tof_")]
+        if tof_cols:  # mirror_tof_rows は既存関数を流用
+            df.loc[right, tof_cols] = mirror_tof_rows(df.loc[right, :], tof_cols)
+
+    return df
+
+
 def augment_by_handedness_flip(df: pd.DataFrame) -> pd.DataFrame:
     """左右反転したサンプルを新規 ``subject`` ID で追加する。
 
     既存データを左右反転させることで学習データ数を倍増させる簡易Augmentation。
-    `handedness` を反転した上で :func:`handedness_correction_v2` を利用して
-    センサ値を左右入れ替えたデータを生成する。
+    左利きデータは右利きに、右利きデータは左利きに変換して新しいサンプルを生成する。
 
     Parameters
     ----------
@@ -82,14 +112,26 @@ def augment_by_handedness_flip(df: pd.DataFrame) -> pd.DataFrame:
     # 右利きサンプル → 左利きへ変換
     if not right_df.empty:
         right_df["handedness"] = 0
-        right_df = handedness_correction_v2(right_df)
+        right_df = handedness_correction_v2_reverse(right_df)
 
     aug_df = pd.concat([left_df, right_df], ignore_index=True)
 
     # 新しい subject ID を割り当てる
-    max_subject = df["subject"].max()
-    subj_map = {s: max_subject + i + 1 for i, s in enumerate(aug_df["subject"].unique())}
-    aug_df["subject"] = aug_df["subject"].map(subj_map).astype(int)
+    # subjectが文字列形式（SUBJ_XXXXXX）の場合は、新しいIDを生成
+    existing_subjects = set(df["subject"].unique())
+    aug_subjects = aug_df["subject"].unique()
+    
+    # 新しいsubject IDを生成（既存のものと重複しないように）
+    new_subject_ids = []
+    counter = 1
+    for _ in aug_subjects:
+        while f"SUBJ_{counter:06d}" in existing_subjects:
+            counter += 1
+        new_subject_ids.append(f"SUBJ_{counter:06d}")
+        counter += 1
+    
+    subj_map = {s: new_id for s, new_id in zip(aug_subjects, new_subject_ids)}
+    aug_df["subject"] = aug_df["subject"].map(subj_map)
 
     return pd.concat([df, aug_df], ignore_index=True)
 
