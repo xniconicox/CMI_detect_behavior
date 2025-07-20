@@ -392,6 +392,16 @@ class Preprocessor:
 
         self._fitted = False
 
+    @property
+    def cache_files(self) -> dict:
+        """Return main cache file paths for each builder."""
+        return {
+            "windows": self.win_builder.cache_file,
+            "tabular": self.tab_builder.cache_file,
+            "tof_voxel": self.tof_builder.cache_file,
+            "tof_windows": self.tof_win_builder.cache_file,
+        }
+
     def _maybe_clean(self, df: pd.DataFrame) -> pd.DataFrame:
         processed = df.copy()
         if self.use_handedness:
