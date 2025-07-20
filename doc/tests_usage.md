@@ -10,6 +10,13 @@
 pip install -r requirements.txt
 ```
 
+Wavelet 特徴量や TDA 特徴量のテストを実行する場合は、追加で次のライブラリが
+必要です。
+
+```bash
+pip install pywavelets giotto-tda
+```
+
 ## 2. テストの実行
 
 ルートディレクトリで以下を実行すると、すべてのテストが実行されます。

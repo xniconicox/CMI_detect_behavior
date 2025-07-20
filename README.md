@@ -57,8 +57,11 @@ python run_baseline.py
 #### 方法2: 手動実行
 
 ```bash
-# 1. 前処理ノートブックの実行
-jupyter nbconvert --to notebook --execute notebooks/preprocess.ipynb
+# 1. 前処理スクリプトの実行（利き手拡張あり）
+python scripts/run_preprocessing.py \
+    --experiment-name exp1 \
+    --use-cache \
+    --augment-handedness
 
 # 2. ベースラインモデルの実行
 python src/baseline_model.py

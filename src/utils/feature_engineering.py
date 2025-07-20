@@ -175,3 +175,45 @@ def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level:
             ax_feats += [np.sum(c ** 2) for c in coeffs]
         feats.append(ax_feats)
     return np.array(feats, dtype=np.float32)
+
+
+def compute_tof_rate_of_change(X_windows: np.ndarray) -> np.ndarray:
+    """Compute mean absolute ToF distance change for each depth per window.
+
+    Parameters
+    ----------
+    X_windows : np.ndarray
+        ToF voxel windows with shape ``(N, T, D, H, W)``.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(N, D)`` containing mean absolute differences
+        between consecutive frames for each depth.
+    """
+    if X_windows.ndim != 5:
+        raise ValueError("Expected ToF windows with 5 dimensions (N, T, D, H, W)")
+
+    diff = np.diff(np.nan_to_num(X_windows, nan=0.0), axis=1)
+    return np.abs(diff).mean(axis=(1, 3, 4))
+
+
+def compute_temperature_change_features(X_windows: np.ndarray) -> np.ndarray:
+    """Compute mean absolute temperature change per sensor in each window.
+
+    Parameters
+    ----------
+    X_windows : np.ndarray
+        Window tensor ``(N, T, C)`` for temperature sensors only.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(N, C)`` with mean absolute differences along the time
+        axis for each sensor.
+    """
+    if X_windows.ndim != 3:
+        raise ValueError("Expected temperature windows with 3 dimensions (N, T, C)")
+
+    diff = np.diff(np.nan_to_num(X_windows, nan=0.0), axis=1)
+    return np.abs(diff).mean(axis=1)

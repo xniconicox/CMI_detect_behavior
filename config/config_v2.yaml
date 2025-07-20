@@ -23,6 +23,8 @@ preprocessing:
   # 各特徴量計算の有無を制御
   use_wavelet_features: true
   use_tda_features: true
+  use_tof_rate_features: false
+  use_temperature_change_features: false
   tof_depth: 5
   tof_height: 8
   tof_width: 8
