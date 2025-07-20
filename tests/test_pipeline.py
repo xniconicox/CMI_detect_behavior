@@ -54,8 +54,8 @@ def make_dummy_df(n_rows: int = 10) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-def make_config(tmp_path: Path) -> dict:
-    return {
+def make_config(tmp_path: Path, ae_model_path: str | None = None) -> dict:
+    cfg = {
         "cache_dir": str(tmp_path / "cache"),
         "preprocessing": {
             "window_size": 16,
@@ -89,6 +89,9 @@ def make_config(tmp_path: Path) -> dict:
             "elbow_to_wrist_cm",
         ],
     }
+    if ae_model_path is not None:
+        cfg["ae_model_path"] = ae_model_path
+    return cfg
 
 
 def test_window_tensor_builder(tmp_path: Path):
@@ -134,6 +137,31 @@ def test_tabular_feature_builder(tmp_path: Path):
     md5_second = json.loads(tab_builder.meta_file.read_text())["md5"]
     assert md5_first == md5_second
     np.testing.assert_allclose(tab, tab_cached)
+
+
+def test_tabular_feature_builder_with_ae(tmp_path: Path, monkeypatch):
+    class DummyAE:
+        def predict(self, X, verbose=0):
+            return np.zeros_like(X)
+
+    import types
+    tf_mod = types.ModuleType("tensorflow")
+    keras_mod = types.ModuleType("keras")
+    keras_mod.models = types.ModuleType("models")
+    keras_mod.models.load_model = lambda path: DummyAE()
+    tf_mod.keras = keras_mod
+    monkeypatch.setitem(sys.modules, "tensorflow", tf_mod)
+    monkeypatch.setitem(sys.modules, "tensorflow.keras", keras_mod)
+    monkeypatch.setitem(sys.modules, "tensorflow.keras.models", keras_mod.models)
+
+    cfg = make_config(tmp_path, ae_model_path=str(tmp_path / "dummy.h5"))
+    df = make_dummy_df()
+    win_builder = WindowTensorBuilder(cfg)
+    windows = win_builder.build(df)
+    tab_builder = TabularFeatureBuilder(cfg)
+    tab, _, _ = tab_builder.build(df, windows=windows)
+
+    assert tab.shape == (1, 130)
 
 
 def test_tof_voxel_builder(tmp_path: Path):

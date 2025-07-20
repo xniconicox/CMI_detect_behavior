@@ -146,7 +146,7 @@ def compute_persistence_image_features_batch(X_windows: np.ndarray, dimension:in
 def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np.ndarray:
     """Block K: per‑window MSE reconstruction error from a trained AE."""
     recon = model.predict(X_windows, verbose=0)
-    return ((X_windows - recon) ** 2).mean(axis=(1, 2), keepdims=True)
+    return ((X_windows - recon) ** 2).mean(axis=(1, 2), keepdims=True).reshape(len(X_windows), 1)
 
 
 

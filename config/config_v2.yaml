@@ -1,6 +1,7 @@
 data_dir: "data"
 cache_dir: "cache"
 output_dir: "output/experiments"
+ae_model_path: null
 
 # preprocessing hyperparameters
 preprocessing:
