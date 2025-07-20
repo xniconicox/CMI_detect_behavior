@@ -2,6 +2,9 @@
 
 IMUウィンドウ、人口統計、表形式特徴量、ToFボクセルの4種類の前処理済みデータを
 読み込んでタワー型のニューラルネットワークで学習を行う。
+少数クラスを考慮するため、``_train_fold`` では
+``sklearn.utils.class_weight.compute_class_weight`` を使ってクラス重みを計算し、
+``model.fit()`` に ``class_weight`` として渡す。
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from sklearn.model_selection import (
     StratifiedGroupKFold,
 )
 from sklearn.metrics import classification_report, f1_score
+from sklearn.utils.class_weight import compute_class_weight
 
 from src.utils.cmi_evaluation import calculate_cmi_score
 from src.utils.pipeline import Preprocessor
@@ -27,7 +31,7 @@ from tensorflow import keras
 
 
 class MultimodalTrainerV31:
-    """多モダリティモデル学習管理クラス"""
+    """多モダリティモデル学習管理クラス（v31）"""
 
     def __init__(self, experiment_name: str = "multimodal") -> None:
         self.experiment_name = experiment_name
@@ -62,6 +66,7 @@ class MultimodalTrainerV31:
         # Add & ReLU
         y = keras.layers.Add()([y, shortcut])
         y = keras.layers.ReLU()(y)
+        y = keras.layers.SpatialDropout3D(0.2)(y)
         return y
 
     def load_all_data(self) -> Dict[str, np.ndarray]:
@@ -85,14 +90,14 @@ class MultimodalTrainerV31:
         X_sensor = _load("train_windows")
         X_demo = _load("train_demographics")
         X_tab = _load("train_tabular")
+        X_tab = X_tab.astype(np.float32)
         X_tof = _load("train_tof_windows")
         y = _load("train_labels")
         info = _load("train_info")
 
         if isinstance(info, list) and len(info) > 0 and isinstance(info[0], dict):
             groups = np.array([
-                d.get("subject") if d.get("subject") is not None else d.get("sequence_id")
-                for d in info
+                d.get("subject") for d in info
             ])
         else:
             groups = np.asarray(info)
@@ -120,6 +125,8 @@ class MultimodalTrainerV31:
         tab_shape: int,
         tof_shape: tuple,
         num_classes: int,
+        *,
+        use_attention: bool = False,
     ) -> keras.Model:
         """タワー型統合ネットワークを構築"""
         # 1. IMU Tower (Bidirectional LSTM)
@@ -141,9 +148,19 @@ class MultimodalTrainerV31:
         tof_input = keras.Input(shape=tof_shape, name="tof")
         x4 = self._resnet_block_3d(tof_input, filters=16, stride=2)
         x4 = self._resnet_block_3d(x4, filters=32, stride=2)
+        if use_attention:
+            x4 = keras.layers.SpatialDropout3D(0.2)(x4)
         x4 = keras.layers.GlobalAveragePooling3D()(x4)
 
-        merged = keras.layers.concatenate([x1, x2, x3, x4])
+        if use_attention:
+            # IMU と ToF 特徴量間でアテンションを計算
+            q = keras.layers.Reshape((1, 64))(keras.layers.Dense(64)(x1))
+            v = keras.layers.Reshape((1, 64))(keras.layers.Dense(64)(x4))
+            attn = keras.layers.MultiHeadAttention(num_heads=4, key_dim=64)(q, v)
+            attn = keras.layers.Flatten()(attn)
+            merged = keras.layers.concatenate([attn, x2, x3])
+        else:
+            merged = keras.layers.concatenate([x1, x2, x3, x4])
         merged = keras.layers.Dense(64, activation="relu")(merged)
         merged = keras.layers.Dropout(0.3)(merged)
         output = keras.layers.Dense(num_classes, activation="softmax")(merged)
@@ -151,8 +168,17 @@ class MultimodalTrainerV31:
         model = keras.Model(
             inputs=[sensor_input, demo_input, tab_input, tof_input], outputs=output
         )
+
+        lr_schedule = keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=1e-3,
+            decay_steps=1000,
+            decay_rate=0.96,
+            staircase=True,
+        )
+        optimizer = keras.optimizers.Adam(learning_rate=lr_schedule)
+
         model.compile(
-            optimizer=keras.optimizers.Adam(),
+            optimizer=optimizer,
             loss="sparse_categorical_crossentropy",
             metrics=["accuracy"],
         )
@@ -171,6 +197,7 @@ class MultimodalTrainerV31:
         *,
         epochs: int = 50,
         batch_size: int = 32,
+        use_attention: bool = False,
     ) -> tuple[keras.Model, keras.callbacks.History, float, float]:
         """単一foldでモデルを学習しF1スコアを返す"""
         model = self.build_multimodal_model(
@@ -179,7 +206,11 @@ class MultimodalTrainerV31:
             tab_shape=X_t.shape[1],
             tof_shape=X_f.shape[1:],
             num_classes=len(np.unique(y)),
+            use_attention=use_attention,
         )
+        classes = np.unique(y)
+        weights = compute_class_weight(class_weight="balanced", classes=classes, y=y[train_idx])
+        class_weight = {cls: w for cls, w in zip(classes, weights)}
         history = model.fit(
             [X_s[train_idx], X_d[train_idx], X_t[train_idx], X_f[train_idx]],
             y[train_idx],
@@ -189,6 +220,7 @@ class MultimodalTrainerV31:
             ),
             epochs=epochs,
             batch_size=batch_size,
+            class_weight=class_weight,
             callbacks=[keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True)],
             verbose=1,
         )
@@ -201,7 +233,14 @@ class MultimodalTrainerV31:
         
         return model, history, float(f1), float(cmi_score)
 
-    def train(self, data: Dict[str, np.ndarray], epochs: int = 50, batch_size: int = 32) -> keras.callbacks.History:
+    def train(
+        self,
+        data: Dict[str, np.ndarray],
+        epochs: int = 50,
+        batch_size: int = 32,
+        *,
+        use_attention: bool = False,
+    ) -> keras.callbacks.History:
         print("=== データ型確認 ===")
         print(f"X_sensor dtype: {data['sensor'].dtype}")
         print(f"X_demo dtype: {data['demographics'].dtype}")
@@ -229,6 +268,7 @@ class MultimodalTrainerV31:
             Xs_val,
             epochs=epochs,
             batch_size=batch_size,
+            use_attention=use_attention,
         )
         self.model = model
         self.history = history
@@ -241,6 +281,8 @@ class MultimodalTrainerV31:
         batch_size: int = 32,
         n_splits: int = 5,
         groups: np.ndarray | None = None,
+        *,
+        use_attention: bool = False,
     ) -> Dict[str, Any]:
         """StratifiedGroupKFold を用いたクロスバリデーション学習"""
         print("=== データ型確認 ===")
@@ -277,6 +319,7 @@ class MultimodalTrainerV31:
                 val_idx,
                 epochs=epochs,
                 batch_size=batch_size,
+                use_attention=use_attention,
             )
             fold_scores.append(f1)
             fold_cmi_scores.append(cmi_score)
