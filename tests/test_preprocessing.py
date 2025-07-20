@@ -98,8 +98,7 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
 
     assert result["windows"].shape == (1, 16, 12)
     assert result["demographics"].shape == (1, 7)
-    assert result["tabular"].shape == (1, 130)
-    assert result["tabular"].shape == (1, 132)
+    assert result["tabular"].shape == (1, 133)
     assert result["tof_voxel"].shape == (len(df), 5, 8, 8)
     assert result["tof_windows"].shape == (1, 16, 5, 8, 8)
     assert result["labels"].shape == (1,)
@@ -253,3 +252,49 @@ def test_missing_sensor_flags(tmp_path: Path):
 
     result = pp.fit_transform(df)
     assert result["tabular"].shape[1] == 132
+
+
+def test_new_feature_options(tmp_path: Path):
+    cfg = {
+        "cache_dir": str(tmp_path / "cache"),
+        "preprocessing": {
+            "window_size": 16,
+            "stride": 8,
+            "min_sequence_length": 4,
+            "padding_value": 0.0,
+            "sampling_rate": 50.0,
+            "fft_bands": [(0.5, 2), (2, 5), (5, 10), (10, 20)],
+            "wavelet": "db4",
+            "wavelet_level": 3,
+            "tda_dimension": 1,
+            "tda_bins": 20,
+            "tda_sigma": 0.1,
+            "use_wavelet_features": False,
+            "use_tda_features": False,
+            "use_tof_event_features": True,
+            "use_temperature_gradient_features": True,
+            "tof_depth": 5,
+            "tof_height": 8,
+            "tof_width": 8,
+            "use_world_acc": False,
+        },
+        "sensor_acc_cols": ["acc_x", "acc_y", "acc_z"],
+        "sensor_rot_cols": ["rot_w", "rot_x", "rot_y", "rot_z"],
+        "sensor_thm_cols": ["thm_1", "thm_2", "thm_3", "thm_4", "thm_5"],
+        "demographics_cols": [
+            "adult_child",
+            "age",
+            "sex",
+            "handedness",
+            "height_cm",
+            "shoulder_to_wrist_cm",
+            "elbow_to_wrist_cm",
+        ],
+    }
+
+    df = make_dummy_df()
+    pp = Preprocessor(cfg, use_interp_cleaning=False)
+    ae = DummyAE()
+    result = pp.fit_transform(df, autoencoder_model=ae)
+
+    assert result["tabular"].shape[1] == 150
