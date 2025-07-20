@@ -175,3 +175,48 @@ def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level:
             ax_feats += [np.sum(c ** 2) for c in coeffs]
         feats.append(ax_feats)
     return np.array(feats, dtype=np.float32)
+
+
+# ============================================================
+# N. ToF イベント特徴量
+# ============================================================
+
+def compute_tof_event_features(X_windows: np.ndarray) -> np.ndarray:
+    """Compute simple ToF event features.
+
+    各ウィンドウについて以下を計算します。
+
+    - 最小距離値
+    - 時系列方向の絶対変化率平均
+    """
+
+    window_min = X_windows.min(axis=(1, 2, 3, 4))[:, None]
+    diff = np.diff(X_windows, axis=1)
+    rate = np.mean(np.abs(diff), axis=(1, 2, 3, 4))[:, None]
+    return np.hstack([window_min, rate])
+
+
+# ============================================================
+# O. 温度勾配特徴量
+# ============================================================
+
+def compute_temperature_gradient_features(X_windows: np.ndarray) -> np.ndarray:
+    """Compute temperature gradient based features.
+
+    Parameters
+    ----------
+    X_windows : np.ndarray
+        Shape ``(N, T, C)`` where ``C`` is the数 of thermal sensors.
+
+    Returns
+    -------
+    np.ndarray
+        ``(N, C*3)`` array containing mean/std of first differences and
+        peak（max-min）for each channel.
+    """
+
+    diffs = np.diff(X_windows, axis=1)
+    diff_mean = diffs.mean(axis=1)
+    diff_std = diffs.std(axis=1)
+    peak_width = X_windows.max(axis=1) - X_windows.min(axis=1)
+    return np.hstack([diff_mean, diff_std, peak_width])
