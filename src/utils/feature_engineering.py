@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import warnings
 from scipy.signal import find_peaks
 
 # ============================================================
@@ -101,10 +102,18 @@ def compute_persistence_image_features(X_windows: np.ndarray, dimension:int=1, n
         feats.append(img.reshape(-1))
     return np.array(feats, dtype=np.float32)
 
-def compute_persistence_image_features_batch(X_windows: np.ndarray, dimension:int=2, n_bins:int=16, sigma:float=0.1) -> np.ndarray:
-    from gtda.time_series import TakensEmbedding
-    from gtda.homology import VietorisRipsPersistence
-    from gtda.diagrams import PersistenceImage
+def compute_persistence_image_features_batch(
+    X_windows: np.ndarray, dimension: int = 2, n_bins: int = 16, sigma: float = 0.1
+) -> np.ndarray:
+    try:
+        from gtda.time_series import TakensEmbedding
+        from gtda.homology import VietorisRipsPersistence
+        from gtda.diagrams import PersistenceImage
+    except ImportError:
+        warnings.warn(
+            "giotto-tda がインストールされていないため、TDA特徴量をスキップします。"
+        )
+        return np.zeros((X_windows.shape[0], 0), dtype=np.float32)
 
     # デバッグ: TDA処理前のNaN値確認
     nan_count = np.isnan(X_windows).sum()
