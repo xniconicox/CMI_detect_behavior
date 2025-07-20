@@ -57,7 +57,7 @@ python scripts/run_preprocessing.py \
 
 - `train_windows.pkl` / `test_windows.pkl`
 - `train_tabular.pkl` / `test_tabular.pkl`
-- `train_tof_voxel.pkl` / `test_tof_voxel.pkl`
+- `train_tof_windows.pkl` / `test_tof_windows.pkl` (旧 `train_tof_voxel.pkl` / `test_tof_voxel.pkl`)
 - `preprocessor.pkl` : 学習済み前処理器
 
 ## 5. コードからの利用例

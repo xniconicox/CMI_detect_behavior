@@ -1,0 +1,16 @@
+Accelerometer:
+  method: linear
+  limit: 3
+
+Rotation:
+  method: slerp
+  limit: 120
+
+ToF_Sensor:
+  method: linear
+  limit: 4
+  fill_value: -1
+
+Thermal:
+  method: linear
+  limit: 120

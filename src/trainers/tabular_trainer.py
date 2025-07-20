@@ -10,7 +10,7 @@ LightGBM と CatBoost を用いた Tabular 特徴量の学習管理を行う。
 from pathlib import Path
 
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.metrics import f1_score
 
 import lightgbm as lgb
@@ -57,13 +57,13 @@ class TabularModelTrainer:
         print(f"クラス数: {self.n_classes}")
         return X, y, label_encoder
 
-    def train_lightgbm(self, n_folds: int = 5):
+    def train_lightgbm(self, n_folds: int = 5, groups=None):
         """LightGBM を用いた学習とモデル保存"""
         X, y, le = self.load_data()
         print("LightGBM 学習開始")
-        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+        skf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=42)
         models = []
-        for fold, (tr_idx, val_idx) in enumerate(skf.split(X, y), 1):
+        for fold, (tr_idx, val_idx) in enumerate(skf.split(X, y, groups), 1):
             print(f"Fold {fold}/{n_folds}")
             train_ds = lgb.Dataset(X[tr_idx], label=y[tr_idx])
             val_ds = lgb.Dataset(X[val_idx], label=y[val_idx])
@@ -102,13 +102,13 @@ class TabularModelTrainer:
         print("LightGBM 学習完了")
         return models
 
-    def train_catboost(self, n_folds: int = 5):
+    def train_catboost(self, n_folds: int = 5, groups=None):
         """CatBoost を用いた学習とモデル保存"""
         X, y, le = self.load_data()
         print("CatBoost 学習開始")
-        skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+        skf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=42)
         models = []
-        for fold, (tr_idx, val_idx) in enumerate(skf.split(X, y), 1):
+        for fold, (tr_idx, val_idx) in enumerate(skf.split(X, y, groups), 1):
             print(f"Fold {fold}/{n_folds}")
             model = CatBoostClassifier(
                 loss_function="MultiClass",

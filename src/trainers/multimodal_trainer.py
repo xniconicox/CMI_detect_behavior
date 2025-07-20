@@ -7,6 +7,7 @@ IMUウィンドウ、人口統計、表形式特徴量、ToFボクセルの4種�
 from __future__ import annotations
 
 import os
+import json
 import pickle
 from pathlib import Path
 from typing import Any, Dict
@@ -14,6 +15,9 @@ from typing import Any, Dict
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, f1_score
+
+from src.utils.cmi_evaluation import calculate_cmi_score
+from src.utils.pipeline import Preprocessor
 import tensorflow as tf
 
 
@@ -30,10 +34,9 @@ class MultimodalTrainer:
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.result_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"実験名: {self.experiment_name}")
-        print(f"データディレクトリ: {self.data_dir}")
+        print(f"Experiment name: {self.experiment_name}")
+        print(f"Data directory: {self.data_dir}")
 
-    # ------------------------------------------------------------------
     def load_all_data(self) -> Dict[str, np.ndarray]:
         """各モダリティの前処理済みデータをすべて読み込む"""
         print("前処理済みデータを読み込み中...")
@@ -48,11 +51,11 @@ class MultimodalTrainer:
                     return pickle.load(f)
             raise FileNotFoundError(f"{name} ファイルが見つかりません")
 
-        X_sensor = _load("X_sensor_windows")
-        X_demo = _load("X_demographics")
-        X_tab = _load("X_tabular")
-        X_tof = _load("X_tof_voxel")
-        y = _load("y")
+        X_sensor = _load("train_windows")
+        X_demo = _load("train_demographics")
+        X_tab = _load("train_tabular")
+        X_tof = _load("train_tof_windows")
+        y = _load("train_labels")
 
         print(f"センサー: {X_sensor.shape}")
         print(f"人口統計: {X_demo.shape}")
@@ -68,7 +71,6 @@ class MultimodalTrainer:
             "labels": y,
         }
 
-    # ------------------------------------------------------------------
     def build_multimodal_model(
         self,
         sensor_shape: tuple[int, int],
@@ -78,27 +80,22 @@ class MultimodalTrainer:
         num_classes: int,
     ) -> tf.keras.Model:
         """タワー型統合ネットワークを構築"""
-        # センサー時系列タワー
         sensor_input = tf.keras.Input(shape=sensor_shape, name="sensor")
         x1 = tf.keras.layers.Masking()(sensor_input)
         x1 = tf.keras.layers.LSTM(64)(x1)
 
-        # 人口統計タワー
         demo_input = tf.keras.Input(shape=(demo_shape,), name="demo")
         x2 = tf.keras.layers.Dense(32, activation="relu")(demo_input)
 
-        # 表形式タワー
         tab_input = tf.keras.Input(shape=(tab_shape,), name="tabular")
         x3 = tf.keras.layers.Dense(64, activation="relu")(tab_input)
 
-        # ToFボクセルタワー
         tof_input = tf.keras.Input(shape=tof_shape, name="tof")
         x4 = tf.keras.layers.Conv3D(16, 3, activation="relu", padding="same")(tof_input)
         x4 = tf.keras.layers.MaxPooling3D()(x4)
         x4 = tf.keras.layers.Conv3D(32, 3, activation="relu", padding="same")(x4)
         x4 = tf.keras.layers.GlobalAveragePooling3D()(x4)
 
-        # 統合
         merged = tf.keras.layers.concatenate([x1, x2, x3, x4])
         merged = tf.keras.layers.Dense(64, activation="relu")(merged)
         merged = tf.keras.layers.Dropout(0.3)(merged)
@@ -115,9 +112,15 @@ class MultimodalTrainer:
         print(model.summary())
         return model
 
-    # ------------------------------------------------------------------
     def train(self, data: Dict[str, np.ndarray], epochs: int = 50, batch_size: int = 32) -> tf.keras.callbacks.History:
-        """モデルを学習"""
+        print("=== データ型確認 ===")
+        print(f"X_sensor dtype: {data['sensor'].dtype}")
+        print(f"X_demo dtype: {data['demographics'].dtype}")
+        print(f"X_tabular dtype: {data['tabular'].dtype}")
+        print(f"X_tof dtype: {data['tof'].dtype}")
+        print(f"y dtype: {data['labels'].dtype}")
+        print(f"y unique values: {np.unique(data['labels'])}")        
+
         X_s = data["sensor"]
         X_d = data["demographics"]
         X_t = data["tabular"]
@@ -150,9 +153,12 @@ class MultimodalTrainer:
         self.history = history
         return history
 
-    # ------------------------------------------------------------------
-    def evaluate(self, data: Dict[str, np.ndarray]) -> Dict[str, Any]:
-        """テストデータで評価"""
+    def evaluate(
+        self,
+        data: Dict[str, np.ndarray],
+        *,
+        preprocessor_path: str | Path | None = None,
+    ) -> Dict[str, Any]:
         X_s = data["sensor"]
         X_d = data["demographics"]
         X_t = data["tabular"]
@@ -161,20 +167,90 @@ class MultimodalTrainer:
 
         preds = self.model.predict([X_s, X_d, X_t, X_f])
         pred_labels = preds.argmax(axis=1)
-        f1 = f1_score(y, pred_labels, average="macro")
-        report = classification_report(y, pred_labels, output_dict=True)
-        print(f"Macro F1: {f1:.4f}")
-        return {"f1_macro": f1, "report": report}
 
-    # ------------------------------------------------------------------
+        label_encoder = None
+        if preprocessor_path is None:
+            preprocessor_path = self.data_dir / "preprocessor.pkl"
+        try:
+            pp_path = Path(preprocessor_path)
+            if pp_path.exists():
+                pp = Preprocessor.load(pp_path)
+                label_encoder = getattr(pp, "label_encoder", None)
+        except Exception as e:
+            print(f"label_encoder 読み込み失敗: {e}")
+
+        cmi_score, binary_f1, macro_f1, test_accuracy = calculate_cmi_score(
+            pred_labels,
+            y,
+            label_encoder=label_encoder,
+        )
+
+        report = classification_report(y, pred_labels, output_dict=True)
+
+        results = {
+            "cmi_score": float(cmi_score),
+            "binary_f1": float(binary_f1),
+            "macro_f1": float(macro_f1),
+            "test_accuracy": float(test_accuracy),
+            "report": report,
+        }
+
+        print(
+            f"CMI Score: {cmi_score:.4f} | Binary F1: {binary_f1:.4f} | "
+            f"Macro F1: {macro_f1:.4f} | Acc: {test_accuracy:.4f}"
+        )
+
+        return results
+
     def save_model(self, path: str | None = None) -> None:
-        """モデルを保存"""
         if path is None:
             path = self.model_dir / "multimodal_model.keras"
         else:
             path = Path(path)
         self.model.save(path)
         print(f"モデル保存: {path}")
+
+    def save_training_history(self, path: str | None = None) -> Path:
+        if path is None:
+            path = self.result_dir / "training_history.json"
+        else:
+            path = Path(path)
+
+        if self.history is None:
+            raise ValueError("history is not set")
+
+        if hasattr(self.history, "history"):
+            history_dict = self.history.history
+        else:
+            history_dict = self.history
+
+        with open(path, "w") as f:
+            json.dump(history_dict, f, indent=2)
+
+        print(f"学習履歴保存: {path}")
+        return path
+
+    def save_evaluation_results(
+        self, results: dict, path: str | Path | None = None
+    ) -> None:
+        if path is None:
+            path = self.result_dir / "evaluation_results.json"
+        else:
+            path = Path(path)
+
+        def _convert(obj: Any):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, (np.floating, float)):
+                return float(obj)
+            if isinstance(obj, (np.integer, int)):
+                return int(obj)
+            return obj
+
+        serializable = {k: _convert(v) for k, v in results.items()}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False, indent=2)
+        print(f"評価結果保存: {path}")
 
 
 if __name__ == "__main__":
@@ -187,4 +263,3 @@ if __name__ == "__main__":
         print(results)
     except Exception as e:
         print(f"エラー: {e}")
-

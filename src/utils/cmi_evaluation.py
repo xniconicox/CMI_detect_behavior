@@ -98,11 +98,13 @@ def calculate_cmi_score(y_pred, y_true, label_encoder=None, verbose=False):
             macro_f1 = f1_score(y_true_macro, y_pred_macro, average='macro', zero_division='warn')
             
         else:
-            # ラベルエンコーダーがない場合は、通常のF1スコアを計算
+            # ラベルエンコーダーがない場合は、マルチクラス分類用のF1スコアを計算
             if verbose:
-                print("Label encoderなし - 数値ラベルで直接計算")
+                print("Label encoderなし - マルチクラス分類用F1スコアを計算")
             
-            binary_f1 = f1_score(y_true, y_pred, average='binary', zero_division='warn')
+            # マルチクラス分類ではbinaryは使用できないため、microまたはmacroを使用
+            # ここではmacroを使用（各クラスを平等に扱う）
+            binary_f1 = f1_score(y_true, y_pred, average='macro', zero_division='warn')
             macro_f1 = f1_score(y_true, y_pred, average='macro', zero_division='warn')
         
         # 3. 最終スコア = Binary F1 + Macro F1の平均
@@ -152,6 +154,229 @@ def print_gesture_info():
     print(f"\nTotal: {len(TARGET_GESTURES) + len(NON_TARGET_GESTURES)} gestures")
 
 
+def add_cmi_metrics_to_history(history_dict, y_true, y_pred, label_encoder=None, verbose=False):
+    """
+    学習履歴辞書にCMI評価指標を追加
+    
+    Parameters:
+    -----------
+    history_dict : dict
+        学習履歴辞書
+    y_true : array-like
+        真のラベル
+    y_pred : array-like
+        予測ラベル
+    label_encoder : LabelEncoder, optional
+        ラベルエンコーダー
+    verbose : bool, default=False
+        詳細ログの出力フラグ
+    
+    Returns:
+    --------
+    dict
+        CMI評価指標が追加された学習履歴辞書
+    """
+    try:
+        # CMI評価指標を計算
+        cmi_score, binary_f1, macro_f1, accuracy = calculate_cmi_score(
+            y_pred, y_true, label_encoder, verbose
+        )
+        
+        # 新しい形式の学習履歴に対応
+        if 'training_metrics' in history_dict and 'validation_metrics' in history_dict:
+            # 新しい詳細形式
+            if 'cmi_score' not in history_dict['training_metrics']:
+                history_dict['training_metrics']['cmi_score'] = []
+            if 'binary_f1' not in history_dict['training_metrics']:
+                history_dict['training_metrics']['binary_f1'] = []
+            if 'macro_f1' not in history_dict['training_metrics']:
+                history_dict['training_metrics']['macro_f1'] = []
+            
+            # 検証データのCMI評価指標も追加（同じ値を使用）
+            if 'cmi_score' not in history_dict['validation_metrics']:
+                history_dict['validation_metrics']['cmi_score'] = []
+            if 'binary_f1' not in history_dict['validation_metrics']:
+                history_dict['validation_metrics']['binary_f1'] = []
+            if 'macro_f1' not in history_dict['validation_metrics']:
+                history_dict['validation_metrics']['macro_f1'] = []
+            
+            # 各エポックに同じ値を追加（実際の学習では各エポックで異なる値になる）
+            epochs = len(history_dict['training_metrics']['loss'])
+            for _ in range(epochs):
+                history_dict['training_metrics']['cmi_score'].append(cmi_score)
+                history_dict['training_metrics']['binary_f1'].append(binary_f1)
+                history_dict['training_metrics']['macro_f1'].append(macro_f1)
+                history_dict['validation_metrics']['cmi_score'].append(cmi_score)
+                history_dict['validation_metrics']['binary_f1'].append(binary_f1)
+                history_dict['validation_metrics']['macro_f1'].append(macro_f1)
+        
+        else:
+            # 古い形式
+            if 'cmi_score' not in history_dict:
+                history_dict['cmi_score'] = []
+            if 'binary_f1' not in history_dict:
+                history_dict['binary_f1'] = []
+            if 'macro_f1' not in history_dict:
+                history_dict['macro_f1'] = []
+            
+            epochs = len(history_dict['loss'])
+            for _ in range(epochs):
+                history_dict['cmi_score'].append(cmi_score)
+                history_dict['binary_f1'].append(binary_f1)
+                history_dict['macro_f1'].append(macro_f1)
+        
+        if verbose:
+            print(f"CMI評価指標を学習履歴に追加しました:")
+            print(f"  CMI Score: {cmi_score:.4f}")
+            print(f"  Binary F1: {binary_f1:.4f}")
+            print(f"  Macro F1: {macro_f1:.4f}")
+            print(f"  Accuracy: {accuracy:.4f}")
+        
+        return history_dict
+        
+    except Exception as e:
+        print(f"CMI評価指標の追加でエラー: {str(e)}")
+        return history_dict
+
+
+def create_cmi_metrics_history(y_true, y_pred, label_encoder=None, verbose=False):
+    """
+    CMI評価指標のみの学習履歴を作成
+    
+    Parameters:
+    -----------
+    y_true : array-like
+        真のラベル
+    y_pred : array-like
+        予測ラベル
+    label_encoder : LabelEncoder, optional
+        ラベルエンコーダー
+    verbose : bool, default=False
+        詳細ログの出力フラグ
+    
+    Returns:
+    --------
+    dict
+        CMI評価指標の学習履歴辞書
+    """
+    try:
+        # CMI評価指標を計算
+        cmi_score, binary_f1, macro_f1, accuracy = calculate_cmi_score(
+            y_pred, y_true, label_encoder, verbose
+        )
+        
+        # 学習履歴辞書を作成
+        history_dict = {
+            'training_metrics': {
+                'cmi_score': [cmi_score],
+                'binary_f1': [binary_f1],
+                'macro_f1': [macro_f1],
+                'accuracy': [accuracy]
+            },
+            'validation_metrics': {
+                'cmi_score': [cmi_score],
+                'binary_f1': [binary_f1],
+                'macro_f1': [macro_f1],
+                'accuracy': [accuracy]
+            },
+            'metadata': {
+                'timestamp': '2025-01-01 00:00:00',
+                'model_config': {
+                    'num_classes': len(np.unique(y_true)),
+                    'label_encoder_used': label_encoder is not None
+                }
+            },
+            'summary': {
+                'final_cmi_score': cmi_score,
+                'final_binary_f1': binary_f1,
+                'final_macro_f1': macro_f1,
+                'final_accuracy': accuracy
+            }
+        }
+        
+        if verbose:
+            print(f"CMI評価指標の学習履歴を作成しました:")
+            print(f"  CMI Score: {cmi_score:.4f}")
+            print(f"  Binary F1: {binary_f1:.4f}")
+            print(f"  Macro F1: {macro_f1:.4f}")
+            print(f"  Accuracy: {accuracy:.4f}")
+        
+        return history_dict
+        
+    except Exception as e:
+        print(f"CMI評価指標の学習履歴作成でエラー: {str(e)}")
+        return {}
+
+
 if __name__ == "__main__":
     # モジュールテスト
-    print_gesture_info() 
+    print_gesture_info()
+    
+    print("\n" + "="*60)
+    print("CMI評価指標モジュールの使用方法")
+    print("="*60)
+    
+    print("""
+【基本的な使用方法】
+
+1. CMI評価指標の計算:
+   from utils.cmi_evaluation import calculate_cmi_score
+   
+   cmi_score, binary_f1, macro_f1, accuracy = calculate_cmi_score(
+       y_pred, y_true, label_encoder, verbose=True
+   )
+
+2. ターゲットジェスチャーの取得:
+   from utils.cmi_evaluation import get_target_gestures, get_non_target_gestures
+   
+   target_gestures = get_target_gestures()
+   non_target_gestures = get_non_target_gestures()
+
+3. ジェスチャーの判定:
+   from utils.cmi_evaluation import is_target_gesture
+   
+   is_target = is_target_gesture("Above ear - pull hair")
+
+4. 学習履歴にCMI評価指標を追加:
+   from utils.cmi_evaluation import add_cmi_metrics_to_history
+   
+   updated_history = add_cmi_metrics_to_history(
+       history_dict, y_true, y_pred, label_encoder, verbose=True
+   )
+
+【CMI評価指標の詳細】
+
+- CMI Score: (Binary F1 + Macro F1) / 2.0
+- Binary F1: ターゲット vs 非ターゲットの2値分類F1スコア
+- Macro F1: 全ジェスチャーのマクロF1スコア（非ターゲットは統合）
+
+【ターゲットジェスチャー（8種類）】
+- Above ear - pull hair
+- Cheek - pinch skin
+- Eyebrow - pull hair
+- Eyelash - pull hair
+- Forehead - pull hairline
+- Forehead - scratch
+- Neck - pinch skin
+- Neck - scratch
+
+【非ターゲットジェスチャー（10種類）】
+- Write name on leg
+- Wave hello
+- Glasses on/off
+- Text on phone
+- Write name in air
+- Feel around in tray and pull out an object
+- Scratch knee/leg skin
+- Pull air toward your face
+- Drink from bottle/cup
+- Pinch knee/leg skin
+
+【関連スクリプト】
+
+学習履歴の可視化:
+python src/scripts/visualize_training_history.py --history path/to/training_history.json
+
+CMI評価指標の追加:
+python src/scripts/add_cmi_metrics_to_history.py --demo --output demo_history.json
+""") 

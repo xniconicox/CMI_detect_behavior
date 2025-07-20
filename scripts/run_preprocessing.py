@@ -83,9 +83,6 @@ def main() -> None:
         logger.info("Loading train.csv and test.csv")
         train_df = pd.read_csv(data_dir / "train.csv")
         test_df = pd.read_csv(data_dir / "test.csv")
-        # Load main data
-        train_df = pd.read_csv(data_dir / "train.csv")
-        test_df = pd.read_csv(data_dir / "test.csv")
         logger.info("Fitting Preprocessor")
         
         # Load demographics data and merge
@@ -99,11 +96,11 @@ def main() -> None:
         pp = Preprocessor(config)
         pp.fit(train_df, use_cache=args.use_cache)
         train_data = pp.transform(train_df, use_cache=args.use_cache)
-        test_data = pp.transform(test_df, use_cache=args.use_cache)
+        # test_data = pp.transform(test_df, use_cache=args.use_cache)
 
         # save results
         save_dict(train_data, "train", pre_dir)
-        save_dict(test_data, "test", pre_dir)
+        # save_dict(test_data, "test", pre_dir)
         logger.info("Saved train/test outputs to %s", pre_dir)
         pp.save(pre_dir / "preprocessor.pkl")
         logger.info("Saved preprocessor to %s", pre_dir / "preprocessor.pkl")
