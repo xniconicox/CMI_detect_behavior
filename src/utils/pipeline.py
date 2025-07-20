@@ -31,6 +31,7 @@ from .feature_engineering import (
     compute_fft_band_energy,
     compute_wavelet_features,
     compute_persistence_image_features_batch,
+    compute_autoencoder_reconstruction_error,
 )
 from .imu import add_world_acc_features
 
@@ -200,6 +201,11 @@ class TabularFeatureBuilder:
                 sigma=self.tda_sigma,
             )
             feats.append(tda)
+        if autoencoder_model is not None:
+            ae_err = compute_autoencoder_reconstruction_error(
+                X_sensor, autoencoder_model
+            ).reshape(len(X_sensor), -1)
+            feats.append(ae_err)
             
         # --- 欠損センサフラグ (per-window mean) ----------------------
         flag_cols = [
@@ -555,7 +561,6 @@ class Preprocessor:
         Preprocessor
             The fitted instance.
         """
-
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
@@ -625,7 +630,6 @@ class Preprocessor:
         dict
             Dictionary containing processed arrays.
         """
-
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
         logger.info("Transforming dataframe of shape %s", df.shape)
@@ -711,6 +715,10 @@ class Preprocessor:
         *,
         autoencoder_model=None,
     ) -> dict:
+        self.fit(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
+        return self.transform(
+            df, use_cache=use_cache, autoencoder_model=autoencoder_model
+        )
         """Fit the preprocessor and transform the data in one call.
 
         Parameters

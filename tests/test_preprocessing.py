@@ -50,6 +50,11 @@ def make_dummy_df(n_rows: int = 10) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+class DummyAE:
+    def predict(self, X, verbose=0):
+        return np.zeros_like(X)
+
+
 def test_preprocessor_cache_and_transform(tmp_path: Path):
     cfg = {
         "cache_dir": str(tmp_path / "cache"),
@@ -88,10 +93,12 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
 
     df = make_dummy_df()
     pp = Preprocessor(cfg, use_interp_cleaning=False)
-    result = pp.fit_transform(df)
+    ae = DummyAE()
+    result = pp.fit_transform(df, autoencoder_model=ae)
 
     assert result["windows"].shape == (1, 16, 12)
     assert result["demographics"].shape == (1, 7)
+    assert result["tabular"].shape == (1, 130)
     assert result["tabular"].shape == (1, 132)
     assert result["tof_voxel"].shape == (len(df), 5, 8, 8)
     assert result["tof_windows"].shape == (1, 16, 5, 8, 8)
@@ -115,7 +122,7 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
     pkl = tmp_path / "preproc.pkl"
     pp.save(pkl)
     loaded = Preprocessor.load(pkl)
-    out = loaded.transform(df)
+    out = loaded.transform(df, autoencoder_model=ae)
     for key in ["windows", "demographics", "tabular", "tof_voxel", "tof_windows"]:
         np.testing.assert_allclose(result[key], out[key])
 
