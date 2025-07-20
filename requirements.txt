@@ -59,6 +59,7 @@ fonttools==4.58.4
 fqdn==1.5.1
 fsspec==2025.5.1
 graphviz==0.21
+giotto-tda
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
@@ -112,6 +113,7 @@ pure-eval==0.2.3
 pycparser==2.22
 pygments==2.19.2
 pyparsing==3.2.3
+pywavelets
 python-dateutil==2.9.0.post0
 python-json-logger==3.3.0
 pytz==2025.2
