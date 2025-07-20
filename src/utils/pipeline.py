@@ -131,6 +131,7 @@ class TabularFeatureBuilder:
         *,
         use_wavelet: bool | None = None,
         use_tda: bool | None = None,
+        autoencoder_model=None,
     ):
         """Return tabular features for each window.
 
@@ -146,6 +147,10 @@ class TabularFeatureBuilder:
             Override config to compute wavelet features.
         use_tda : bool | None, optional
             Override config to compute TDA features.
+        autoencoder_model : optional
+            Pre-trained model used to compute reconstruction errors. The
+            object must implement ``predict`` and return reconstructed
+            windows with the same shape as the input.
         """
 
         md5 = df_md5(df)
@@ -526,7 +531,31 @@ class Preprocessor:
         # self._debug_nan_values(X_clean, "処理後")
         return X_clean
 
-    def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":
+    def fit(
+        self,
+        df: pd.DataFrame,
+        use_cache: bool = True,
+        *,
+        autoencoder_model=None,
+    ) -> "Preprocessor":
+        """Fit scalers using the provided dataframe.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw sensor dataframe.
+        use_cache : bool, default True
+            Reuse cached results when available.
+        autoencoder_model : optional
+            Pre-trained model for reconstruction error features. It must
+            implement ``predict`` and return reconstructed windows.
+
+        Returns
+        -------
+        Preprocessor
+            The fitted instance.
+        """
+
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
@@ -552,7 +581,12 @@ class Preprocessor:
         
         # 表形式特徴量の正規化
         processed_windows = (X_sensor_clean, X_demo, y, windows[3])
-        tab, _, _ = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(
+            df_proc,
+            windows=processed_windows,
+            use_cache=use_cache,
+            autoencoder_model=autoencoder_model,
+        )
         tab_clean = np.nan_to_num(tab, nan=0.0)
         self.tab_scaler.fit(tab_clean)
         logger.info("Tabular features shape %s", tab.shape)
@@ -567,7 +601,31 @@ class Preprocessor:
         self._fitted = True
         return self
 
-    def transform(self, df: pd.DataFrame, use_cache: bool = True) -> dict:
+    def transform(
+        self,
+        df: pd.DataFrame,
+        use_cache: bool = True,
+        *,
+        autoencoder_model=None,
+    ) -> dict:
+        """Transform dataframe using fitted scalers.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw sensor dataframe.
+        use_cache : bool, default True
+            Reuse cached results when available.
+        autoencoder_model : optional
+            Pre-trained model used for reconstruction error features. The
+            object must provide ``predict`` returning reconstructed windows.
+
+        Returns
+        -------
+        dict
+            Dictionary containing processed arrays.
+        """
+
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
         logger.info("Transforming dataframe of shape %s", df.shape)
@@ -588,7 +646,12 @@ class Preprocessor:
         
         # 表形式特徴量の正規化
         processed_windows = (X_sensor_clean, X_demo, y, info)
-        tab, _, _ = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(
+            df_proc,
+            windows=processed_windows,
+            use_cache=use_cache,
+            autoencoder_model=autoencoder_model,
+        )
         # nan_count = np.isnan(tab).sum()
         # logger.info(f"NaNの数: {nan_count}")
         # tab_clean = np.nan_to_num(tab, nan=0.0)
@@ -641,9 +704,33 @@ class Preprocessor:
             "info": info,
         }
 
-    def fit_transform(self, df: pd.DataFrame, use_cache: bool = True) -> dict:
-        self.fit(df, use_cache=use_cache)
-        return self.transform(df, use_cache=use_cache)
+    def fit_transform(
+        self,
+        df: pd.DataFrame,
+        use_cache: bool = True,
+        *,
+        autoencoder_model=None,
+    ) -> dict:
+        """Fit the preprocessor and transform the data in one call.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw sensor dataframe.
+        use_cache : bool, default True
+            Reuse cached results when available.
+        autoencoder_model : optional
+            Pre-trained model with ``predict`` returning reconstructed
+            windows.
+
+        Returns
+        -------
+        dict
+            Dictionary of processed arrays.
+        """
+
+        self.fit(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
+        return self.transform(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
 
     def save(self, path: Path) -> None:
         """Save scaler objects and settings to a pickle file."""
