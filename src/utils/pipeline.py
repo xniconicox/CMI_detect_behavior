@@ -22,6 +22,7 @@ from .preprocessing import (
     clean_sensor_missing_values,
     clean_missing_sensor_data_parallel_disk,
 )
+from .feature_engineering import add_missing_sensor_flags
 from .config_utils import load_config, get_cache_dir
 from .tof import tof_to_voxel_tensor
 from .feature_engineering import (
@@ -195,6 +196,30 @@ class TabularFeatureBuilder:
             )
             feats.append(tda)
             
+        # --- 欠損センサフラグ (per-window mean) ----------------------
+        flag_cols = [
+            c
+            for c in [
+                "missing_flag_imu",
+                "missing_flag_thermal",
+                "missing_flag_tof",
+            ]
+            if c in df.columns
+        ]
+        if flag_cols:
+            grouped = {
+                (s, sid): g[flag_cols].to_numpy(float)
+                for (s, sid), g in df.groupby(["subject", "sequence_id"])
+            }
+            flags = []
+            for m in info:
+                arr = grouped[(m["subject"], m["sequence_id"])]
+                start = m["start_idx"]
+                end = min(m["end_idx"], arr.shape[0])
+                flags.append(arr[start:end].mean(axis=0))
+            flag_array = np.vstack(flags)
+            feats.append(flag_array)
+
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])
         final_nan_count = np.isnan(features).sum()
@@ -360,10 +385,20 @@ class Preprocessor:
             processed = clean_sensor_missing_values(
                 processed, self.sensor_type_groups
             )
+        # 欠損センサフラグを付与
+        flag_groups = {
+            "missing_flag_imu": self.sensor_type_groups.get("Accelerometer", [])
+            + self.sensor_type_groups.get("Rotation", []),
+            "missing_flag_thermal": self.sensor_type_groups.get("Thermal", []),
+            "missing_flag_tof": self.sensor_type_groups.get("ToF_Sensor", []),
+        }
+        processed = add_missing_sensor_flags(processed, flag_groups)
+
         if self.use_interp_cleaning:
             base_keep = self.config.get("demographics_cols", [])
             # Only include columns that exist in the dataframe
             keep = [col for col in base_keep + ["gesture"] if col in df.columns]
+            keep.extend(flag_groups.keys())
             processed = clean_missing_sensor_data_parallel_disk(
                 processed,
                 sensor_type_groups=self.sensor_type_groups,
