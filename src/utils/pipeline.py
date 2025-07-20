@@ -30,6 +30,7 @@ from .feature_engineering import (
     compute_fft_band_energy,
     compute_wavelet_features,
     compute_persistence_image_features_batch,
+    add_missing_sensor_flags,
     compute_tof_rate_of_change,
     compute_temperature_change_features,
 )
@@ -390,6 +391,20 @@ class Preprocessor:
                 interp_params=self.interp_params,
                 keep_cols=keep,
             )
+        # 欠損フラグ列を追加
+        sensor_groups = {
+            "missing_flag_imu": self.sensor_type_groups.get("Accelerometer", [])
+            + self.sensor_type_groups.get("Rotation", []),
+            "missing_flag_thermal": self.sensor_type_groups.get("Thermal", []),
+            "missing_flag_tof": self.sensor_type_groups.get("ToF_Sensor", []),
+        }
+        processed = add_missing_sensor_flags(processed, sensor_groups)
+        # WindowTensorBuilder にもフラグ列を含める
+        for flag in sensor_groups.keys():
+            for builder in [self.win_builder, self.tab_builder.window_builder]:
+                if flag not in builder.sensor_cols:
+                    builder.sensor_cols.append(flag)
+
         if self.use_world_acc:
             processed = add_world_acc_features(processed)
         return processed
