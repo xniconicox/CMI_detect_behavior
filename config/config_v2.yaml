@@ -21,13 +21,13 @@ preprocessing:
   tda_dimension: 1
   tda_bins: 8
   tda_sigma: 0.1
-  # 各特徴量計算の有無を制御
+  # 各特徴量計算の有無を制御（デフォルトで有効）
   use_wavelet_features: true
   use_tda_features: true
   # ToFセンサのフレーム間変化量特徴を計算するか
-  use_tof_rate_features: false
+  use_tof_rate_features: true
   # 温度センサーの変化量特徴を計算するか
-  use_temperature_change_features: false
+  use_temperature_change_features: true
   tof_depth: 5
   tof_height: 8
   tof_width: 8

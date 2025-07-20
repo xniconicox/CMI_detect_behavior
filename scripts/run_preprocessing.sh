@@ -13,7 +13,7 @@ EXPERIMENT_NAME="preproc-v2"                 # 実験名
 CONFIG_PATH="config/config_v2.yaml"    # 設定ファイルパス
 USE_CACHE=false                         # キャッシュ利用
 MODE="train"                           # train または predict
-AUGMENT_HANDEDNESS=false                # 利き手反転によるデータ拡張
+AUGMENT_HANDEDNESS=true                 # 利き手反転によるデータ拡張（デフォルト有効）
 
 # ============================================================
 # 実行前準備
