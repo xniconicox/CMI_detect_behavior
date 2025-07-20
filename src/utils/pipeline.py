@@ -32,6 +32,8 @@ from .feature_engineering import (
     compute_wavelet_features,
     compute_persistence_image_features_batch,
     compute_autoencoder_reconstruction_error,
+    compute_tof_event_features,
+    compute_temperature_gradient_features,
 )
 from .imu import add_world_acc_features
 
@@ -113,12 +115,15 @@ class TabularFeatureBuilder:
         self.fft_bands = pp.get("fft_bands", [])
         self.use_wavelet = pp.get("use_wavelet_features", False)
         self.use_tda = pp.get("use_tda_features", False)
+        self.use_tof_event = pp.get("use_tof_event_features", False)
+        self.use_temp_grad = pp.get("use_temperature_gradient_features", False)
         self.wavelet = pp.get("wavelet", "db4")
         self.wavelet_level = pp.get("wavelet_level", 3)
         self.tda_dimension = pp.get("tda_dimension", 1)
         self.tda_bins = pp.get("tda_bins", 20)
         self.tda_sigma = pp.get("tda_sigma", 0.1)
         self.window_builder = WindowTensorBuilder(self.config)
+        self.tof_win_builder = ToFWindowBuilder(self.config)
         self.cache_dir = get_cache_dir(self.config)
         self.cache_file = self.cache_dir / "tabular_features.pkl"
         self.meta_file = self.cache_dir / "tabular_meta.json"
@@ -132,6 +137,8 @@ class TabularFeatureBuilder:
         *,
         use_wavelet: bool | None = None,
         use_tda: bool | None = None,
+        use_tof_event: bool | None = None,
+        use_temp_grad: bool | None = None,
         autoencoder_model=None,
     ):
         """Return tabular features for each window.
@@ -148,6 +155,10 @@ class TabularFeatureBuilder:
             Override config to compute wavelet features.
         use_tda : bool | None, optional
             Override config to compute TDA features.
+        use_tof_event : bool | None, optional
+            Override config to compute ToF event features.
+        use_temp_grad : bool | None, optional
+            Override config to compute temperature gradient features.
         autoencoder_model : optional
             Pre-trained model used to compute reconstruction errors. The
             object must implement ``predict`` and return reconstructed
@@ -157,10 +168,14 @@ class TabularFeatureBuilder:
         md5 = df_md5(df)
         use_wavelet = self.use_wavelet if use_wavelet is None else use_wavelet
         use_tda = self.use_tda if use_tda is None else use_tda
+        use_tof_event = self.use_tof_event if use_tof_event is None else use_tof_event
+        use_temp_grad = self.use_temp_grad if use_temp_grad is None else use_temp_grad
         logger.info(
-            "Building tabular features (wavelet=%s, tda=%s)",
+            "Building tabular features (wavelet=%s, tda=%s, tof_event=%s, temp_grad=%s)",
             use_wavelet,
             use_tda,
+            use_tof_event,
+            use_temp_grad,
         )
         if use_cache and self.cache_file.exists() and self.meta_file.exists():
             meta = json.loads(self.meta_file.read_text())
@@ -201,6 +216,20 @@ class TabularFeatureBuilder:
                 sigma=self.tda_sigma,
             )
             feats.append(tda)
+        if use_tof_event:
+            X_tof, _ = self.tof_win_builder.build(df, use_cache=use_cache)
+            tof_feat = compute_tof_event_features(X_tof)
+            feats.append(tof_feat)
+        if use_temp_grad:
+            thm_cols = self.config.get("sensor_thm_cols", [])
+            if thm_cols:
+                sensor_config = self.window_builder.sensor_cols
+                idx = [sensor_config.index(c) for c in thm_cols if c in sensor_config]
+                if idx:
+                    temp_feat = compute_temperature_gradient_features(
+                        X_sensor[:, :, idx]
+                    )
+                    feats.append(temp_feat)
         if autoencoder_model is not None:
             ae_err = compute_autoencoder_reconstruction_error(
                 X_sensor, autoencoder_model
