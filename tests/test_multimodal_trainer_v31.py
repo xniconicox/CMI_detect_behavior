@@ -77,6 +77,7 @@ def test_build_model_with_attention(monkeypatch):
         "Bidirectional": make_layer("Bidirectional"),
         "Dense": make_layer("Dense"),
         "Add": make_layer("Add"),
+        "Average": make_layer("Average"),
         "Conv3D": make_layer("Conv3D"),
         "BatchNormalization": make_layer("BatchNormalization"),
         "ReLU": make_layer("ReLU"),

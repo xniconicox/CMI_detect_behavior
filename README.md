@@ -67,6 +67,33 @@ python scripts/run_preprocessing.py \
 python src/baseline_model.py
 ```
 
+
+#### `run_preprocessing.sh` を使う
+
+`scripts/run_preprocessing.py` と同等の処理をシェルスクリプトから実行できます。
+スクリプト内で仮想環境の有無をチェックし、有効でない場合は終了します。仮想環境を有効にした状態で次を実行します。
+
+```bash
+bash scripts/run_preprocessing.sh
+```
+
+スクリプト先頭の変数を変更することで実験名や設定ファイルなどを調整できます。
+- `EXPERIMENT_NAME` : 出力フォルダ名
+- `CONFIG_PATH` : 使用する設定ファイル
+- `MODE` : `train` または `predict`
+- `USE_CACHE` : キャッシュを利用するか
+- `AUGMENT_HANDEDNESS` : 利き手反転拡張を行うか
+
+詳細なフロー説明は
+[doc/preprocess/preprocessing_flow_jp.md](doc/preprocess/preprocessing_flow_jp.md)
+および
+[doc/preprocess/preprocessing_pipeline.md](doc/preprocess/preprocessing_pipeline.md)
+を参照してください。新しい変化量特徴を利用する場合は
+`config/config_v2.yaml` の `preprocessing` セクションで
+`use_tof_rate_features: true` や
+`use_temperature_change_features: true` を設定してから
+`scripts/run_preprocessing.py` を実行します。
+
 ## 📁 ディレクトリ構造
 
 ```
@@ -127,6 +154,10 @@ pytest -q
 - **基本統計量**: mean, std, min, max, median
 - **分布統計量**: skew, kurtosis
 - **センサー別特徴量**: 加速度、回転、熱、ToFセンサー
+- **欠損センサフラグ**: IMU・Thermal・ToFの欠測有無
+- **温度変化特徴**: 温度センサーのフレーム差分平均
+- **ToF変化量特徴**: 深度ごとの距離変化量
+- **AE再構成誤差**: 事前学習AEモデルで算出した誤差
 
 ### 3. データ正規化
 
@@ -211,6 +242,8 @@ params = {
 - **時系列特徴量**: FFT、ウェーブレット変換
 - **センサー融合**: マルチモーダル特徴量
 - **ドメイン知識**: ジェスチャー固有の特徴量
+- **変化量特徴の導入**: ToF変化量・温度変化量やAE再構成誤差を活用
+- **欠損センサフラグ活用**: センサの脱落情報をモデルに入れる
 
 ### 2. モデル改善
 
