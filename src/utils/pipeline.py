@@ -30,9 +30,10 @@ from .feature_engineering import (
     compute_fft_band_energy,
     compute_wavelet_features,
     compute_persistence_image_features_batch,
+    compute_autoencoder_reconstruction_error,
     add_missing_sensor_flags,
     compute_tof_rate_of_change,
-    compute_temperature_change_features,
+    compute_temperature_change_features
 )
 from .imu import add_world_acc_features
 
@@ -121,6 +122,8 @@ class TabularFeatureBuilder:
         self.tda_dimension = pp.get("tda_dimension", 1)
         self.tda_bins = pp.get("tda_bins", 20)
         self.tda_sigma = pp.get("tda_sigma", 0.1)
+        self.ae_model_path = self.config.get("ae_model_path")
+        self._ae_model = None
         self.window_builder = WindowTensorBuilder(self.config)
         self.tof_window_builder = ToFWindowBuilder(self.config)
 
@@ -133,6 +136,15 @@ class TabularFeatureBuilder:
         self.cache_file = self.cache_dir / "tabular_features.pkl"
         self.meta_file = self.cache_dir / "tabular_meta.json"
         self.cache_dir.mkdir(exist_ok=True)
+
+    def _load_ae_model(self):
+        if self.ae_model_path and self._ae_model is None:
+            try:
+                from tensorflow.keras.models import load_model
+            except Exception as e:  # pragma: no cover
+                raise RuntimeError("TensorFlow is required for AE features") from e
+            self._ae_model = load_model(self.ae_model_path)
+        return self._ae_model
 
     def build(
         self,
@@ -160,6 +172,8 @@ class TabularFeatureBuilder:
         """
 
         md5 = df_md5(df)
+        if self.ae_model_path and Path(self.ae_model_path).exists():
+            md5 = md5 + str(Path(self.ae_model_path).stat().st_mtime_ns)
         use_wavelet = self.use_wavelet if use_wavelet is None else use_wavelet
         use_tda = self.use_tda if use_tda is None else use_tda
         logger.info(
@@ -169,7 +183,7 @@ class TabularFeatureBuilder:
         )
         if use_cache and self.cache_file.exists() and self.meta_file.exists():
             meta = json.loads(self.meta_file.read_text())
-            if meta.get("md5") == md5:
+            if meta.get("md5") == md5 and meta.get("ae_model_path") == self.ae_model_path:
                 logger.info("Reusing cached tabular features from %s", self.cache_file)
                 with open(self.cache_file, "rb") as f:
                     return pickle.load(f)
@@ -215,7 +229,11 @@ class TabularFeatureBuilder:
                 sigma=self.tda_sigma,
             )
             feats.append(tda)
-            
+        if self.ae_model_path:
+            model = self._load_ae_model()
+            ae_err = compute_autoencoder_reconstruction_error(X_sensor, model)
+            feats.append(ae_err)
+
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])
         final_nan_count = np.isnan(features).sum()
@@ -226,7 +244,8 @@ class TabularFeatureBuilder:
         if use_cache:
             with open(self.cache_file, "wb") as f:
                 pickle.dump(result, f)
-            self.meta_file.write_text(json.dumps({"md5": md5}))
+            meta = {"md5": md5, "ae_model_path": self.ae_model_path}
+            self.meta_file.write_text(json.dumps(meta))
         logger.info("Tabular features shape %s", result[0].shape)
         return result
 
