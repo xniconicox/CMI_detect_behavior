@@ -48,6 +48,52 @@ def handedness_correction_v2(
     return df
 
 
+def augment_by_handedness_flip(df: pd.DataFrame) -> pd.DataFrame:
+    """左右反転したサンプルを新規 ``subject`` ID で追加する。
+
+    既存データを左右反転させることで学習データ数を倍増させる簡易Augmentation。
+    `handedness` を反転した上で :func:`handedness_correction_v2` を利用して
+    センサ値を左右入れ替えたデータを生成する。
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        元のセンサーデータ。``subject`` と ``handedness`` 列を含む必要がある。
+
+    Returns
+    -------
+    pd.DataFrame
+        元の ``df`` に左右反転サンプルを連結したデータフレーム。
+    """
+
+    if "subject" not in df.columns or "handedness" not in df.columns:
+        raise ValueError("'subject' および 'handedness' 列が必要です")
+
+    df = df.copy()
+
+    left_df = df[df["handedness"] == 0].copy()
+    right_df = df[df["handedness"] == 1].copy()
+
+    # 左利きサンプル → 右利きへ変換
+    if not left_df.empty:
+        left_df = handedness_correction_v2(left_df)
+        left_df["handedness"] = 1
+
+    # 右利きサンプル → 左利きへ変換
+    if not right_df.empty:
+        right_df["handedness"] = 0
+        right_df = handedness_correction_v2(right_df)
+
+    aug_df = pd.concat([left_df, right_df], ignore_index=True)
+
+    # 新しい subject ID を割り当てる
+    max_subject = df["subject"].max()
+    subj_map = {s: max_subject + i + 1 for i, s in enumerate(aug_df["subject"].unique())}
+    aug_df["subject"] = aug_df["subject"].map(subj_map).astype(int)
+
+    return pd.concat([df, aug_df], ignore_index=True)
+
+
 import re
 # ── 1. ToF の水平ミラー（左右反転）関数 ─────────────────────────
 def mirror_tof_rows(df: pd.DataFrame, tof_cols: list[str]) -> pd.DataFrame:

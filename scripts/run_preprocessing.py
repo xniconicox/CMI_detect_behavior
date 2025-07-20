@@ -25,6 +25,7 @@ import yaml
 
 from src.utils.pipeline import Preprocessor
 from src.utils.logging_utils import setup_logging
+from src.utils.preprocessing import augment_by_handedness_flip
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -62,6 +63,11 @@ def main() -> None:
         help="train: fit and transform train/test, predict: transform only",
     )
     parser.add_argument(
+        "--augment-handedness",
+        action="store_true",
+        help="flip handedness and append augmented samples",
+    )
+    parser.add_argument(
         "--log-file",
         help=(
             "log file path (default: <output_dir>/<experiment>/preprocessed/preprocess.log)"
@@ -92,7 +98,12 @@ def main() -> None:
         # Merge demographics data
         train_df = train_df.merge(train_demo, on="subject", how="left")
         test_df = test_df.merge(test_demo, on="subject", how="left")
-        
+
+        if args.augment_handedness:
+            logger.info("Augmenting train data by handedness flip")
+            train_df = augment_by_handedness_flip(train_df)
+            logger.info("Augmented train samples: %d", len(train_df))
+
         pp = Preprocessor(config)
         pp.fit(train_df, use_cache=args.use_cache)
         train_data = pp.transform(train_df, use_cache=args.use_cache)
