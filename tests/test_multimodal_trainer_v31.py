@@ -154,3 +154,66 @@ def test_build_model_with_attention(monkeypatch):
     assert isinstance(model, Model)
     assert model.compiled
 
+
+def test_build_model_multiwindow(monkeypatch):
+    created = []
+
+    class DummyTensor:
+        pass
+
+    class BaseLayer:
+        def __init__(self, *args, **kwargs):
+            created.append(self.__class__.__name__)
+
+        def __call__(self, *args, **kwargs):
+            return DummyTensor()
+
+    def make_layer(name):
+        return type(name, (BaseLayer,), {})
+
+    layers = {"Masking": make_layer("Masking"), "LSTM": make_layer("LSTM"), "Bidirectional": make_layer("Bidirectional"), "Dense": make_layer("Dense"), "Add": make_layer("Add"), "Conv3D": make_layer("Conv3D"), "BatchNormalization": make_layer("BatchNormalization"), "ReLU": make_layer("ReLU"), "GlobalAveragePooling3D": make_layer("GlobalAveragePooling3D")}
+
+    def Input(*args, **kwargs):
+        created.append("Input")
+        return DummyTensor()
+
+    for name, cls in layers.items():
+        setattr(keras_mod.layers, name, cls)
+    keras_mod.layers.Input = Input
+    keras_mod.Input = Input
+    mm.keras.Input = Input
+    mm.keras.layers = keras_mod.layers
+
+    class Model:
+        def __init__(self, inputs=None, outputs=None):
+            self.compiled = False
+
+        def compile(self, *args, **kwargs):
+            self.compiled = True
+
+        def summary(self):
+            return "summary"
+
+    keras_mod.models.Model = Model
+    mm.keras.models.Model = Model
+
+    keras_mod.optimizers = types.ModuleType("optimizers")
+    keras_mod.optimizers.schedules = types.ModuleType("schedules")
+    mm.keras.optimizers = keras_mod.optimizers
+    keras_mod.optimizers.schedules.ExponentialDecay = lambda *a, **k: None
+    keras_mod.optimizers.Adam = lambda *a, **k: None
+    mm.keras.optimizers.schedules = keras_mod.optimizers.schedules
+    mm.keras.optimizers.Adam = keras_mod.optimizers.Adam
+
+    trainer = MultimodalTrainerV31()
+    model = trainer.build_multimodal_model(
+        sensor_shape={8: (2, 3), 16: (2, 3)},
+        demo_shape=2,
+        tab_shape=4,
+        tof_shape={8: (1, 1, 1, 1), 16: (1, 1, 1, 1)},
+        num_classes=2,
+    )
+
+    assert "Input" in created
+    assert isinstance(model, Model)
+
