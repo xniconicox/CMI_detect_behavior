@@ -148,6 +148,8 @@ class MultimodalTrainerV31:
         tof_input = keras.Input(shape=tof_shape, name="tof")
         x4 = self._resnet_block_3d(tof_input, filters=16, stride=2)
         x4 = self._resnet_block_3d(x4, filters=32, stride=2)
+        if use_attention:
+            x4 = keras.layers.SpatialDropout3D(0.2)(x4)
         x4 = keras.layers.GlobalAveragePooling3D()(x4)
 
         if use_attention:
