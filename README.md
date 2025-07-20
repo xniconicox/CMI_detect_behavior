@@ -67,6 +67,23 @@ python scripts/run_preprocessing.py \
 python src/baseline_model.py
 ```
 
+
+#### `run_preprocessing.sh` を使う
+
+`scripts/run_preprocessing.py` と同等の処理をシェルスクリプトから実行できます。
+スクリプト内で仮想環境の有無をチェックし、有効でない場合は終了します。仮想環境を有効にした状態で次を実行します。
+
+```bash
+bash scripts/run_preprocessing.sh
+```
+
+スクリプト先頭の変数を変更することで実験名や設定ファイルなどを調整できます。
+- `EXPERIMENT_NAME` : 出力フォルダ名
+- `CONFIG_PATH` : 使用する設定ファイル
+- `MODE` : `train` または `predict`
+- `USE_CACHE` : キャッシュを利用するか
+- `AUGMENT_HANDEDNESS` : 利き手反転拡張を行うか
+
 詳細なフロー説明は
 [doc/preprocess/preprocessing_flow_jp.md](doc/preprocess/preprocessing_flow_jp.md)
 および

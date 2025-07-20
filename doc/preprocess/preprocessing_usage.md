@@ -51,6 +51,22 @@ python scripts/run_preprocessing.py \
 - `--log-file` : ログを保存するファイルパス。省略時は
   `output_dir/<experiment_name>/preprocessed/preprocess.log` に出力されます。
 
+
+### 3.1 `run_preprocessing.sh` の利用
+
+オプション指定をまとめたシェルスクリプト `scripts/run_preprocessing.sh` も用意しています。実行前に仮想環境を有効にしてください。
+
+```bash
+bash scripts/run_preprocessing.sh
+```
+
+ファイル冒頭の変数を編集することで設定を変更できます。
+- `EXPERIMENT_NAME` : 実験名
+- `CONFIG_PATH` : 設定ファイルパス
+- `MODE` : `train` または `predict`
+- `USE_CACHE` : キャッシュを利用するか
+- `AUGMENT_HANDEDNESS` : 利き手反転拡張を行うか
+
 ## 4. 出力ファイル
 
 生成されるファイルの詳細は [preprocessing_outputs.md](preprocessing_outputs.md) を参照してください。主に以下が保存されます。
