@@ -30,6 +30,7 @@ from .feature_engineering import (
     compute_fft_band_energy,
     compute_wavelet_features,
     compute_persistence_image_features_batch,
+    compute_autoencoder_reconstruction_error,
 )
 from .imu import add_world_acc_features
 
@@ -130,6 +131,7 @@ class TabularFeatureBuilder:
         *,
         use_wavelet: bool | None = None,
         use_tda: bool | None = None,
+        autoencoder_model=None,
     ):
         """Return tabular features for each window.
 
@@ -194,6 +196,11 @@ class TabularFeatureBuilder:
                 sigma=self.tda_sigma,
             )
             feats.append(tda)
+        if autoencoder_model is not None:
+            ae_err = compute_autoencoder_reconstruction_error(
+                X_sensor, autoencoder_model
+            ).reshape(len(X_sensor), -1)
+            feats.append(ae_err)
             
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])
@@ -491,7 +498,13 @@ class Preprocessor:
         # self._debug_nan_values(X_clean, "処理後")
         return X_clean
 
-    def fit(self, df: pd.DataFrame, use_cache: bool = True) -> "Preprocessor":
+    def fit(
+        self,
+        df: pd.DataFrame,
+        use_cache: bool = True,
+        *,
+        autoencoder_model=None,
+    ) -> "Preprocessor":
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
@@ -517,7 +530,12 @@ class Preprocessor:
         
         # 表形式特徴量の正規化
         processed_windows = (X_sensor_clean, X_demo, y, windows[3])
-        tab, _, _ = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(
+            df_proc,
+            windows=processed_windows,
+            use_cache=use_cache,
+            autoencoder_model=autoencoder_model,
+        )
         tab_clean = np.nan_to_num(tab, nan=0.0)
         self.tab_scaler.fit(tab_clean)
         logger.info("Tabular features shape %s", tab.shape)
@@ -532,7 +550,13 @@ class Preprocessor:
         self._fitted = True
         return self
 
-    def transform(self, df: pd.DataFrame, use_cache: bool = True) -> dict:
+    def transform(
+        self,
+        df: pd.DataFrame,
+        use_cache: bool = True,
+        *,
+        autoencoder_model=None,
+    ) -> dict:
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
         logger.info("Transforming dataframe of shape %s", df.shape)
@@ -553,7 +577,12 @@ class Preprocessor:
         
         # 表形式特徴量の正規化
         processed_windows = (X_sensor_clean, X_demo, y, info)
-        tab, _, _ = self.tab_builder.build(df_proc, windows=processed_windows, use_cache=use_cache)
+        tab, _, _ = self.tab_builder.build(
+            df_proc,
+            windows=processed_windows,
+            use_cache=use_cache,
+            autoencoder_model=autoencoder_model,
+        )
         # nan_count = np.isnan(tab).sum()
         # logger.info(f"NaNの数: {nan_count}")
         # tab_clean = np.nan_to_num(tab, nan=0.0)
@@ -606,9 +635,17 @@ class Preprocessor:
             "info": info,
         }
 
-    def fit_transform(self, df: pd.DataFrame, use_cache: bool = True) -> dict:
-        self.fit(df, use_cache=use_cache)
-        return self.transform(df, use_cache=use_cache)
+    def fit_transform(
+        self,
+        df: pd.DataFrame,
+        use_cache: bool = True,
+        *,
+        autoencoder_model=None,
+    ) -> dict:
+        self.fit(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
+        return self.transform(
+            df, use_cache=use_cache, autoencoder_model=autoencoder_model
+        )
 
     def save(self, path: Path) -> None:
         """Save scaler objects and settings to a pickle file."""
