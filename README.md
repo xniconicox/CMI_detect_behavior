@@ -254,6 +254,17 @@ v40モデルを利用する場合の実行例は次の通りです。
 bash scripts/run_multimodal_training_v40.sh
 ```
 
+複数のウィンドウ長を組み合わせて学習する場合の簡易例を次に示します。各ウィンドウ
+サイズで別々の実験名を指定して学習し、後からアンサンブルする方法です。
+
+```bash
+EXPERIMENT_NAME="exp_ws64" bash scripts/run_multimodal_training_v40.sh
+EXPERIMENT_NAME="exp_ws128" bash scripts/run_multimodal_training_v40.sh
+```
+
+詳しい手順や特徴量統合の例は `doc/model/dual_window_training_jp.md` を参照して
+ください。
+
 ### 3. 結果の確認
 
 ```bash
