@@ -48,6 +48,43 @@ def handedness_correction_v2(
     return df
 
 
+def augment_handedness_flip(
+    df: pd.DataFrame,
+    *,
+    imu_prefixes: Sequence[str] = ("acc", "gyro", "rot", "mag"),
+    apply_tof_mirror: bool = True,
+) -> pd.DataFrame:
+    """左右反転したデータを追加して返すデータ拡張用関数"""
+    df_flip = df.copy()
+
+    # IMU の Y/Z 軸を反転させる
+    for pre in imu_prefixes:
+        axes = ("w", "x", "y", "z") if pre == "rot" else ("x", "y", "z")
+        for ax in axes:
+            col = f"{pre}_{ax}"
+            if col in df_flip.columns and ax in {"y", "z"}:
+                df_flip[col] = -df_flip[col]
+
+    # ToF の左右ピクセルを鏡像ミラー
+    if apply_tof_mirror:
+        tof_cols = [c for c in df_flip.columns if c.startswith("tof_")]
+        if tof_cols:
+            df_flip = mirror_tof_rows(df_flip, tof_cols)
+
+    # 利き手ラベルを反転
+    if "handedness" in df_flip.columns:
+        df_flip["handedness"] = 1 - df_flip["handedness"]
+
+    # 既存の subject/sequence_id と被らないようオフセット
+    if "subject" in df_flip.columns:
+        df_flip["subject"] = df_flip["subject"] + df["subject"].max() + 1
+    if "sequence_id" in df_flip.columns:
+        df_flip["sequence_id"] = df_flip["sequence_id"] + df["sequence_id"].max() + 1
+
+    # 元データと結合
+    return pd.concat([df, df_flip], ignore_index=True)
+
+
 import re
 # ── 1. ToF の水平ミラー（左右反転）関数 ─────────────────────────
 def mirror_tof_rows(df: pd.DataFrame, tof_cols: list[str]) -> pd.DataFrame:
