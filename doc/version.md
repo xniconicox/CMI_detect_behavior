@@ -34,3 +34,9 @@ ensemble v30
 - **ユニットテスト拡充**：Attention・Dropout・型変換の検証を追加
 
     CMI 0.53
+
+### v40 変更点
+
+- 軽量アーキテクチャ採用
+- 前処理オプションの追加（線形加速度・周期特徴・温度勾配など）
+- 学習スクリプト `scripts/run_multimodal_training_v40.sh`
