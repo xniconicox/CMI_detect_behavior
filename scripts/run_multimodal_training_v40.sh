@@ -121,12 +121,12 @@ if [[ "$SAVE_LOGS" == "true" ]]; then
     echo "📝 ログファイル: $LOG_FILE"
     python -c "
 import yaml
-from src.trainers.multimodal_trainer_v31 import MultimodalTrainerV31
+from src.trainers.multimodal_trainer_v40 import MultimodalTrainerV40
 with open('$CONFIG_PATH', 'r') as f:
     config = yaml.safe_load(f)
 model_params = config.get('model_params', {})
 train_params = config.get('training_params', {})
-trainer = MultimodalTrainerV31('$EXPERIMENT_NAME')
+trainer = MultimodalTrainerV40('$EXPERIMENT_NAME')
 data = trainer.load_all_data()
 history = trainer.train_cross_validation(
     data,
@@ -144,12 +144,12 @@ print('学習完了！')
 else
     python -c "
 import yaml
-from src.trainers.multimodal_trainer_v31 import MultimodalTrainerV31
+from src.trainers.multimodal_trainer_v40 import MultimodalTrainerV40
 with open('$CONFIG_PATH', 'r') as f:
     config = yaml.safe_load(f)
 model_params = config.get('model_params', {})
 train_params = config.get('training_params', {})
-trainer = MultimodalTrainerV31('$EXPERIMENT_NAME')
+trainer = MultimodalTrainerV40('$EXPERIMENT_NAME')
 data = trainer.load_all_data()
 history = trainer.train_cross_validation(
     data,
