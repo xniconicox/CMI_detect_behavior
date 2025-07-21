@@ -19,6 +19,7 @@ from .preprocessing import (
     create_sliding_windows_with_demographics,
     create_tof_windows_with_info,
     handedness_correction_v2,
+    augment_handedness_flip,
     clean_sensor_missing_values,
     clean_missing_sensor_data_parallel_disk,
 )
@@ -378,6 +379,7 @@ class Preprocessor:
         pp = self.config.get("preprocessing", {})
         if use_world_acc is None:
             use_world_acc = pp.get("use_world_acc", False)
+        self.use_handedness_augmentation = pp.get("use_handedness_augmentation", False)
         self.win_builder = WindowTensorBuilder(self.config)
         self.tab_builder = TabularFeatureBuilder(self.config)
         self.tof_builder = ToFVoxelBuilder(self.config)
@@ -391,6 +393,8 @@ class Preprocessor:
         self.use_basic_cleaning = use_basic_cleaning
         self.use_interp_cleaning = use_interp_cleaning
         self.use_world_acc = use_world_acc
+        # handedness augmentation option
+        self.use_handedness_augmentation = bool(self.use_handedness_augmentation)
 
         pp = self.config.get("preprocessing", {})
         depth = pp.get("tof_depth", 5)
@@ -593,6 +597,8 @@ class Preprocessor:
         """
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
+        if self.use_handedness_augmentation:
+            df_proc = augment_handedness_flip(df_proc)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, y, _ = windows
         
@@ -664,6 +670,8 @@ class Preprocessor:
             raise RuntimeError("Preprocessor is not fitted")
         logger.info("Transforming dataframe of shape %s", df.shape)
         df_proc = self._maybe_clean(df)
+        if self.use_handedness_augmentation:
+            df_proc = augment_handedness_flip(df_proc)
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, y, info = windows
         
@@ -779,6 +787,7 @@ class Preprocessor:
             "use_basic_cleaning": self.use_basic_cleaning,
             "use_interp_cleaning": self.use_interp_cleaning,
             "use_world_acc": self.use_world_acc,
+            "use_handedness_augmentation": self.use_handedness_augmentation,
             "sensor_scaler": self.sensor_scaler,
             "demo_scaler": self.demo_scaler,
             "tab_scaler": self.tab_scaler,
@@ -810,4 +819,5 @@ class Preprocessor:
         obj.tof_mean = data.get("tof_mean", None)
         obj.tof_std = data.get("tof_std", None)
         obj.label_encoder = data.get("label_encoder", None)
+        obj.use_handedness_augmentation = data.get("use_handedness_augmentation", False)
         return obj
