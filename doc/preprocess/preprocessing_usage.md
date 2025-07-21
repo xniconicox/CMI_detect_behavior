@@ -42,6 +42,14 @@ python scripts/run_preprocessing.py \
     --use-cache
 ```
 
+`run_preprocessing.py` のオプション指定を簡略化したラッパー `scripts/run_preprocessing.sh` も利用できます。
+
+```bash
+bash scripts/run_preprocessing.sh exp1 train    # 学習と変換
+bash scripts/run_preprocessing.sh exp1 predict  # 変換のみ
+```
+
+
 各オプションの意味は以下の通りです。
 
 - `--config` : YAML 形式の設定ファイル。デフォルトは `config/config_v2.yaml`。

@@ -223,9 +223,10 @@ params = {
 
 ### 1. 前処理の実行
 
-```python
-# ノートブック内で実行
-# notebooks/preprocess.ipynb を参照
+前処理はシェルスクリプト `scripts/run_preprocessing.sh` から実行できます。
+
+```bash
+bash scripts/run_preprocessing.sh exp1 train
 ```
 
 ### 2. モデル学習
