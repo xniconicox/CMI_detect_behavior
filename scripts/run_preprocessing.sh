@@ -7,7 +7,7 @@
 
 EXPERIMENT="preprocess_v2"
 MODE="train"
-CONFIG_PATH="config/config_v2.yaml"
+# CONFIG_PATH="config/config_v2_ws64.yaml"
 USE_CACHE=true
 LOG_FILE=""
 
@@ -35,9 +35,17 @@ if [[ -n "$LOG_FILE" ]]; then
   LOG_OPT="--log-file $LOG_FILE"
 fi
 
-python scripts/run_preprocessing.py \
-    --experiment-name "$EXPERIMENT" \
-    --config "$CONFIG_PATH" \
-    $CACHE_OPT \
-    --mode "$MODE" \
-    $LOG_OPT
+# ウィンドウサイズごとに実行
+for WS in 64 128; do
+    if [ "$WS" = "64" ]; then
+        CONFIG="config/config_v2_ws64.yaml"
+    else
+        CONFIG="config/config_v2.yaml"
+    fi
+
+    python -m scripts.run_preprocessing \
+        --experiment-name "${EXPERIMENT}_ws${WS}" \
+        --config "$CONFIG" \
+        --use-cache \
+        --mode "$MODE"
+done

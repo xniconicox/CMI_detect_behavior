@@ -190,28 +190,25 @@ class TabularFeatureBuilder:
         else:
             X_sensor, X_demo, y, info = windows
             
-        # # NaN値チェックと処理
-        # nan_count = np.isnan(X_sensor).sum()
-        # if nan_count > 0:
-        #     logger.warning(f"TabularFeatureBuilder: NaN値 {nan_count} 個を検出、0.0に置換")
-        #     X_sensor = np.nan_to_num(X_sensor, nan=0.0, posinf=1.0, neginf=-1.0)
-            
-        stats = compute_basic_statistics(X_sensor)
-        peaks = compute_peak_features(X_sensor)
+        # 外れ値処理はPreprocessorで行うため、ここでは不要
+        X_sensor_clean = X_sensor
+        
+        stats = compute_basic_statistics(X_sensor_clean)
+        peaks = compute_peak_features(X_sensor_clean)
         fft = compute_fft_band_energy(
-            X_sensor, fs=self.sampling_rate, bands=self.fft_bands
+            X_sensor_clean, fs=self.sampling_rate, bands=self.fft_bands
         )
 
         # decide whether to compute optional features
         feats = [stats, peaks, fft]
         if use_wavelet:
             wave = compute_wavelet_features(
-                X_sensor, wavelet=self.wavelet, level=self.wavelet_level
+                X_sensor_clean, wavelet=self.wavelet, level=self.wavelet_level
             )
             feats.append(wave)
         if use_tda:
             tda = compute_persistence_image_features_batch(
-                X_sensor,
+                X_sensor_clean,
                 dimension=self.tda_dimension,
                 n_bins=self.tda_bins,
                 sigma=self.tda_sigma,
@@ -228,13 +225,13 @@ class TabularFeatureBuilder:
                 idx = [sensor_config.index(c) for c in thm_cols if c in sensor_config]
                 if idx:
                     temp_feat = compute_temperature_gradient_features(
-                        X_sensor[:, :, idx]
+                        X_sensor_clean[:, :, idx]
                     )
                     feats.append(temp_feat)
         if autoencoder_model is not None:
             ae_err = compute_autoencoder_reconstruction_error(
-                X_sensor, autoencoder_model
-            ).reshape(len(X_sensor), -1)
+                X_sensor_clean, autoencoder_model
+            ).reshape(len(X_sensor_clean), -1)
             feats.append(ae_err)
             
         # --- 欠損センサフラグ (per-window mean) ----------------------
@@ -571,6 +568,44 @@ class Preprocessor:
         # self._debug_nan_values(X_clean, "処理後")
         return X_clean
 
+    def _handle_outliers_in_sensor_data(self, X_sensor: np.ndarray, percentile_low: float = 0.5, percentile_high: float = 99.5) -> np.ndarray:
+        """センサーデータの外れ値を処理する
+        
+        Parameters
+        ----------
+        X_sensor : np.ndarray
+            センサーデータ
+        percentile_low : float, default 0.5
+            下位パーセンタイル（より厳しい外れ値検出）
+        percentile_high : float, default 99.5
+            上位パーセンタイル（より厳しい外れ値検出）
+        """
+        if X_sensor is None:
+            return X_sensor
+            
+        X_clean = X_sensor.copy()
+        
+        # 各センサー軸ごとに外れ値を処理
+        for axis in range(X_clean.shape[2]):
+            axis_data = X_clean[:, :, axis]
+            
+            # パーセンタイルベースのクリッピング（ウィンザライゼーション）
+            q_low = np.percentile(axis_data, percentile_low)
+            q_high = np.percentile(axis_data, percentile_high)
+            
+            # 外れ値をクリップ
+            axis_data_clipped = np.clip(axis_data, q_low, q_high)
+            X_clean[:, :, axis] = axis_data_clipped
+            
+            # ログ出力（最初の数軸のみ）
+            if axis < 3:
+                outlier_count = np.sum((axis_data < q_low) | (axis_data > q_high))
+                outlier_ratio = outlier_count / axis_data.size * 100
+                if outlier_ratio > 0.1:  # 0.1%以上の場合のみログ
+                    logger.info(f"軸{axis}: 外れ値{outlier_count:,}個 ({outlier_ratio:.2f}%) をクリップ ({percentile_low}%～{percentile_high}%)")
+        
+        return X_clean
+
     def fit(
         self,
         df: pd.DataFrame,
@@ -610,8 +645,9 @@ class Preprocessor:
             logger.info(f"ラベルエンコーダー作成: {self.label_encoder.classes_}")
             logger.info(f"ラベルマッピング: {dict(zip(self.label_encoder.classes_, range(len(self.label_encoder.classes_))))}")
         
-        # センサー別の適切な欠損値処理
+        # センサー別の適切な欠損値処理と外れ値処理
         X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
+        X_sensor_clean = self._handle_outliers_in_sensor_data(X_sensor_clean)
         logger.info("Window tensor shape %s", X_sensor_clean.shape)
         self.sensor_scaler.fit(X_sensor_clean.reshape(-1, X_sensor_clean.shape[-1]))
     
@@ -628,16 +664,39 @@ class Preprocessor:
             use_cache=use_cache,
             autoencoder_model=autoencoder_model,
         )
+        # --- クリップ処理を追加 ---
         tab_clean = np.nan_to_num(tab, nan=0.0)
+        # クリップ閾値をfit時に保存
+        self.tab_clip_low = np.percentile(tab_clean, 0.5, axis=0)
+        self.tab_clip_high = np.percentile(tab_clean, 99.5, axis=0)
+        tab_clean = np.clip(tab_clean, self.tab_clip_low, self.tab_clip_high)
         self.tab_scaler.fit(tab_clean)
         logger.info("Tabular features shape %s", tab.shape)
         
         # === ToF正規化パラメータ計算 ===
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
-        mask = (tof_tensor != -1)
-        self.tof_mean = float(tof_tensor[mask].mean())
-        self.tof_std = float(tof_tensor[mask].std())
-        logger.info(f"ToF mean: {self.tof_mean:.3f}, std: {self.tof_std:.3f}")
+        # 負の値を欠損値として扱う（-1だけでなく、負の値全体）
+        mask = (tof_tensor > 0)
+        if mask.sum() > 0:
+            self.tof_mean = float(tof_tensor[mask].mean())
+            self.tof_std = float(tof_tensor[mask].std())
+            logger.info(f"ToF mean: {self.tof_mean:.3f}, std: {self.tof_std:.3f} (有効値: {mask.sum():,}個)")
+        else:
+            self.tof_mean = 0.0
+            self.tof_std = 1.0
+            logger.warning("ToF: 有効な正の値が見つかりませんでした")
+
+        # ToF Windowsの正規化パラメータも計算
+        tof_windows_fit, _ = self.tof_win_builder.build(df_proc, use_cache=use_cache)
+        mask_win_fit = (tof_windows_fit > 0)
+        if mask_win_fit.sum() > 0:
+            self.tof_windows_mean = float(tof_windows_fit[mask_win_fit].mean())
+            self.tof_windows_std = float(tof_windows_fit[mask_win_fit].std())
+            logger.info(f"ToF Windows mean: {self.tof_windows_mean:.3f}, std: {self.tof_windows_std:.3f} (有効値: {mask_win_fit.sum():,}個)")
+        else:
+            self.tof_windows_mean = 0.0
+            self.tof_windows_std = 1.0
+            logger.warning("ToF Windows: 有効な正の値が見つかりませんでした")
 
         self._fitted = True
         return self
@@ -675,9 +734,10 @@ class Preprocessor:
         windows = self.win_builder.build(df_proc, use_cache=use_cache)
         X_sensor, X_demo, y, info = windows
         
-        # センサー別の適切な欠損値処理、正規化
+        # センサー別の適切な欠損値処理、外れ値処理、正規化
         logger.info("Window tensor shape %s", X_sensor.shape)
         X_sensor_clean = self._handle_missing_values_by_sensor_type(X_sensor)
+        X_sensor_clean = self._handle_outliers_in_sensor_data(X_sensor_clean)
         X_sensor_normalized = self.sensor_scaler.transform(
             X_sensor_clean.reshape(-1, X_sensor_clean.shape[-1])
         ).reshape(X_sensor_clean.shape)
@@ -694,26 +754,36 @@ class Preprocessor:
             use_cache=use_cache,
             autoencoder_model=autoencoder_model,
         )
-        # nan_count = np.isnan(tab).sum()
-        # logger.info(f"NaNの数: {nan_count}")
-        # tab_clean = np.nan_to_num(tab, nan=0.0)
-        tab_normalized = self.tab_scaler.transform(tab)
+        # 欠損値処理と外れ値処理を追加してfit時とtransform時で一貫性を保つ
+        tab_clean = np.nan_to_num(tab, nan=0.0)
+        # --- クリップ処理をfitで保存した閾値で適用 ---
+        if hasattr(self, "tab_clip_low") and hasattr(self, "tab_clip_high"):
+            tab_clean = np.clip(tab_clean, self.tab_clip_low, self.tab_clip_high)
+        tab_normalized = self.tab_scaler.transform(tab_clean)
         
         # === ToF正規化 ===
         tof_tensor = self.tof_builder.build(df_proc, use_cache=use_cache)
-        mask = (tof_tensor != -1)
+        # 負の値を欠損値として扱う（-1だけでなく、負の値全体）
+        mask = (tof_tensor > 0)
         tof_tensor_norm = np.zeros_like(tof_tensor)
         if hasattr(self, "tof_mean") and hasattr(self, "tof_std") and self.tof_std > 0:
             tof_tensor_norm[mask] = (tof_tensor[mask] - self.tof_mean) / self.tof_std
+            tof_tensor_norm[~mask] = -1  # 欠損値を-1で埋め戻す
+            logger.info(f"ToF正規化完了: 有効値{mask.sum():,}個, 欠損値{(~mask).sum():,}個")
         else:
             tof_tensor_norm = tof_tensor  # 正規化できない場合はそのまま
+            logger.warning("ToF: 正規化パラメータが利用できません")
+            
         tof_windows, _ = self.tof_win_builder.build(df_proc, use_cache=use_cache)
-        mask_win = (tof_windows != -1)
+        mask_win = (tof_windows > 0)
         tof_windows_norm = np.zeros_like(tof_windows)
-        if hasattr(self, "tof_mean") and hasattr(self, "tof_std") and self.tof_std > 0:
-            tof_windows_norm[mask_win] = (tof_windows[mask_win] - self.tof_mean) / self.tof_std
+        if hasattr(self, "tof_windows_mean") and hasattr(self, "tof_windows_std") and self.tof_windows_std > 0:
+            tof_windows_norm[mask_win] = (tof_windows[mask_win] - self.tof_windows_mean) / self.tof_windows_std
+            tof_windows_norm[~mask_win] = -1  # 欠損値を-1で埋め戻す
+            logger.info(f"ToF Windows正規化完了: 有効値{mask_win.sum():,}個, 欠損値{(~mask_win).sum():,}個")
         else:
             tof_windows_norm = tof_windows
+            logger.warning("ToF Windows: 正規化パラメータが利用できません")
             
         logger.info(
             "Output shapes: windows=%s, demographics=%s, tabular=%s, tof=%s, tof_win=%s",
@@ -794,6 +864,8 @@ class Preprocessor:
             "_fitted": self._fitted,
             "tof_mean": getattr(self, "tof_mean", None),
             "tof_std": getattr(self, "tof_std", None),
+            "tof_windows_mean": getattr(self, "tof_windows_mean", None),
+            "tof_windows_std": getattr(self, "tof_windows_std", None),
             "label_encoder": getattr(self, "label_encoder", None),
         }
         with open(path, "wb") as f:
@@ -818,6 +890,8 @@ class Preprocessor:
         obj._fitted = data.get("_fitted", False)
         obj.tof_mean = data.get("tof_mean", None)
         obj.tof_std = data.get("tof_std", None)
+        obj.tof_windows_mean = data.get("tof_windows_mean", None)
+        obj.tof_windows_std = data.get("tof_windows_std", None)
         obj.label_encoder = data.get("label_encoder", None)
         obj.use_handedness_augmentation = data.get("use_handedness_augmentation", False)
         return obj

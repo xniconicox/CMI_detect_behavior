@@ -11,18 +11,55 @@ from scipy.signal import find_peaks
 # 広域量的特徴――窓全体の強度・分布を圧縮
 # ------------------------------------------------------------
 def compute_basic_statistics(X_windows: np.ndarray) -> np.ndarray:
-    """Compute Block F statistics per window."""
-    means  = X_windows.mean(axis=1)
-    stds   = X_windows.std(axis=1)
-    ranges = X_windows.max(axis=1) - X_windows.min(axis=1)
-    rms    = np.sqrt((X_windows ** 2).mean(axis=1))
-    energy = (X_windows ** 2).sum(axis=1)
+    """Compute Block F statistics per window."""
+    # 外れ値にロバストな統計量を使用
+    means  = np.nanmean(X_windows, axis=1)
+    stds   = np.nanstd(X_windows, axis=1)
+    
+    # パーセンタイルベースの範囲（外れ値にロバスト）
+    q25 = np.nanpercentile(X_windows, 25, axis=1)
+    q75 = np.nanpercentile(X_windows, 75, axis=1)
+    ranges = q75 - q25  # 四分位範囲（IQR）
+    
+    # 外れ値を除外したRMSとエネルギー
+    # 各ウィンドウで外れ値を除外してから計算
+    rms_values = []
+    energy_values = []
+    
+    for i in range(X_windows.shape[0]):
+        window_data = X_windows[i, :, :]
+        
+        # 外れ値を除外（各軸ごと）
+        clean_data = []
+        for axis in range(window_data.shape[1]):
+            axis_data = window_data[:, axis]
+            q1, q99 = np.nanpercentile(axis_data, [1, 99])
+            clean_axis = axis_data[(axis_data >= q1) & (axis_data <= q99)]
+            clean_data.append(clean_axis)
+        
+        # 全軸のデータを結合
+        all_clean_data = np.concatenate(clean_data)
+        
+        if len(all_clean_data) > 0:
+            rms = np.sqrt(np.nanmean(all_clean_data ** 2))
+            energy = np.nansum(all_clean_data ** 2)
+        else:
+            rms = 0.0
+            energy = 0.0
+            
+        rms_values.append(rms)
+        energy_values.append(energy)
+    
+    rms = np.array(rms_values)
+    energy = np.array(energy_values)
+    
     if X_windows.shape[2] >= 3:
         mag = np.linalg.norm(X_windows[:, :, :3], axis=2)
-        mag_mean = mag.mean(axis=1, keepdims=True)
-        mag_std  = mag.std(axis=1, keepdims=True)
-        return np.hstack([means, stds, ranges, rms, energy, mag_mean, mag_std])
-    return np.hstack([means, stds, ranges, rms, energy])
+        mag_mean = np.nanmean(mag, axis=1, keepdims=True)
+        mag_std  = np.nanstd(mag, axis=1, keepdims=True)
+        return np.hstack([means, stds, ranges, rms.reshape(-1, 1), energy.reshape(-1, 1), mag_mean, mag_std])
+    else:
+        return np.hstack([means, stds, ranges, rms.reshape(-1, 1), energy.reshape(-1, 1)])
 
 
 # ============================================================
@@ -39,7 +76,38 @@ def extract_peak_features(window: np.ndarray) -> np.ndarray:
 
 
 def compute_peak_features(X_windows: np.ndarray) -> np.ndarray:
-    """Block D wrapper for many windows."""
+    """Compute peak features per window."""
+    def extract_peak_features(window):
+        features = []
+        for axis in range(window.shape[1]):
+            signal = window[:, axis]
+            
+            # 外れ値を除外してからピーク検出
+            q1, q99 = np.nanpercentile(signal, [1, 99])
+            clean_signal = signal[(signal >= q1) & (signal <= q99)]
+            
+            if len(clean_signal) > 10:  # 十分なデータがある場合のみ
+                peaks, _ = find_peaks(clean_signal, height=np.nanmean(clean_signal))
+                n_peaks = len(peaks)
+                
+                if n_peaks > 0:
+                    peak_heights = clean_signal[peaks]
+                    avg_peak_height = np.nanmean(peak_heights)
+                    max_peak_height = np.nanmax(peak_heights)
+                    peak_ratio = n_peaks / len(clean_signal)
+                else:
+                    avg_peak_height = 0.0
+                    max_peak_height = 0.0
+                    peak_ratio = 0.0
+            else:
+                n_peaks = 0
+                avg_peak_height = 0.0
+                max_peak_height = 0.0
+                peak_ratio = 0.0
+            
+            features.extend([n_peaks, avg_peak_height, max_peak_height, peak_ratio])
+        return features
+    
     return np.vstack([extract_peak_features(w) for w in X_windows])
 
 
@@ -52,17 +120,42 @@ def compute_peak_features(X_windows: np.ndarray) -> np.ndarray:
 # ------------------------------------------------------------
 
 def compute_fft_band_energy(X_windows: np.ndarray, fs: float = 50.0, bands=None) -> np.ndarray:
-    """Compute block G FFT band energies."""
+    """Compute block G FFT band energies."""
     if bands is None:
         bands = [(0.5, 2), (2, 5), (5, 10), (10, 20)]
     n_win, win_len, n_feat = X_windows.shape
     freqs = np.fft.rfftfreq(win_len, d=1.0 / fs)
-    power = np.abs(np.fft.rfft(X_windows, axis=1)) ** 2
+    
     energies = []
     for lo, hi in bands:
         mask = (freqs >= lo) & (freqs < hi)
-        energies.append(power[:, mask, :].sum(axis=1))
-    return np.concatenate(energies, axis=1)
+        band_energies = []
+        
+        for i in range(n_win):
+            window_energies = []
+            for j in range(n_feat):
+                signal = X_windows[i, :, j]
+                
+                # 外れ値を除外してからFFT計算
+                q1, q99 = np.nanpercentile(signal, [1, 99])
+                clean_signal = signal[(signal >= q1) & (signal <= q99)]
+                
+                if len(clean_signal) > 10:
+                    # パディングして元の長さに戻す
+                    padded_signal = np.zeros(win_len)
+                    padded_signal[:len(clean_signal)] = clean_signal
+                    
+                    power = np.abs(np.fft.rfft(padded_signal)) ** 2
+                    energy = power[mask].sum()
+                else:
+                    energy = 0.0
+                
+                window_energies.append(energy)
+            band_energies.append(window_energies)
+        
+        energies.append(np.array(band_energies))
+    
+    return np.hstack(energies)
 
 
 # ============================================================
