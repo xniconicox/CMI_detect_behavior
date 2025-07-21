@@ -223,9 +223,12 @@ params = {
 
 ### 1. 前処理の実行
 
-```python
-# ノートブック内で実行
-# notebooks/preprocess.ipynb を参照
+前処理はシェルスクリプト `scripts/run_preprocessing.sh` から実行します。実行
+するとウィンドウサイズ64と128の2種類が生成され、それぞれ
+`<experiment>_ws64`、`<experiment>_ws128` というディレクトリに保存されます。
+
+```bash
+bash scripts/run_preprocessing.sh exp1 train
 ```
 
 ### 2. モデル学習
