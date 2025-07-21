@@ -123,7 +123,7 @@ def test_tabular_feature_builder(tmp_path: Path):
     tab_builder = TabularFeatureBuilder(cfg)
     tab, labels, info = tab_builder.build(df, windows=windows)
 
-    assert tab.shape == (1, 129)
+    assert tab.shape == (1, 143)
     assert labels.shape == (1,)
     assert len(info) == 1
 
