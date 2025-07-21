@@ -81,6 +81,10 @@ CMI_comp/
 │   ├── train_features.csv  # 前処理済み訓練データ
 │   ├── test_features.csv   # 前処理済みテストデータ
 │   └── submission.csv      # 提出ファイル
+├── scripts/                # 実行スクリプト
+│   ├── run_multimodal_training_v31.sh
+│   ├── run_multimodal_training_v40.sh
+│   └── run_preprocessing.sh
 ├── run_baseline.py         # 一括実行スクリプト
 ├── requirements.txt        # 依存関係
 └── README.md              # このファイル
@@ -242,6 +246,12 @@ bash scripts/run_preprocessing.sh exp1 train
 
 ```bash
 bash scripts/run_multimodal_training_v31.sh
+```
+
+v40モデルを利用する場合の実行例は次の通りです。
+
+```bash
+bash scripts/run_multimodal_training_v40.sh
 ```
 
 ### 3. 結果の確認
