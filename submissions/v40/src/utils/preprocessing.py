@@ -77,10 +77,9 @@ def augment_handedness_flip(
 
     # 既存の subject/sequence_id と被らないようオフセット
     if "subject" in df_flip.columns:
-        df_flip["subject"] = df_flip["subject"].astype(str) + "_flip"
+        df_flip["subject"] = df_flip["subject"] + df["subject"].max() + 1
     if "sequence_id" in df_flip.columns:
-        # sequence_idも文字列として扱い、接尾辞を追加してユニークにする
-        df_flip["sequence_id"] = df_flip["sequence_id"].astype(str) + "_flip"
+        df_flip["sequence_id"] = df_flip["sequence_id"] + df["sequence_id"].max() + 1
 
     # 元データと結合
     return pd.concat([df, df_flip], ignore_index=True)

@@ -14,7 +14,7 @@ import tensorflow as tf
 import logging
 
 from utils.pipeline import Preprocessor
-from trainers.multimodal_trainer_v31 import MultimodalTrainerV31
+from trainers.multimodal_trainer_v40 import MultimodalTrainerV40
 from utils.kaggle import is_kaggle
 
 # Logging settings
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 if is_kaggle():
     # On Kaggle, the models and preprocessor are in the input directory
-    MODEL_DIR = Path("/kaggle/input/cmi-v31/models")
-    PREPROCESSOR_PATH = Path("/kaggle/input/cmi-v31/preprocessed/preprocessor.pkl")
+    MODEL_DIR = Path("/kaggle/input/cmi-v40/models")
+    PREPROCESSOR_PATH = Path("/kaggle/input/cmi-v40/preprocessed/preprocessor.pkl")
 else:
     # Local execution: models are in the models subdirectory
     MODEL_DIR = Path("models")

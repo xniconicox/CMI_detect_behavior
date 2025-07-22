@@ -5,10 +5,10 @@
 #   ./scripts/run_preprocessing.sh exp1
 #   ./scripts/run_preprocessing.sh exp1 --mode predict --no-cache
 
-EXPERIMENT="preprocess_v2"
+EXPERIMENT="preprocess_v40"
 MODE="train"
 # CONFIG_PATH="config/config_v2_ws64.yaml"
-USE_CACHE=true
+USE_CACHE=false
 LOG_FILE=""
 
 while [[ $# -gt 0 ]]; do
@@ -38,9 +38,9 @@ fi
 # ウィンドウサイズごとに実行
 for WS in 64 128; do
     if [ "$WS" = "64" ]; then
-        CONFIG="config/config_v2_ws64.yaml"
+        CONFIG="config/config_v40_ws64.yaml"
     else
-        CONFIG="config/config_v2.yaml"
+        CONFIG="config/config_v40_ws128.yaml"
     fi
 
     python -m scripts.run_preprocessing \
