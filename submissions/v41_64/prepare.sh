@@ -16,14 +16,15 @@ cp -p ../../src/utils/imu.py ./src/utils/
 cp -p ../../src/utils/feature_engineering.py ./src/utils/
 cp -p ../../src/utils/io_utils.py ./src/utils/
 
-# Link ws128 model and preprocessor
-ln -s ../../output/experiments/preprocess_v40_ws128/models models_128
-ln -s ../../output/experiments/preprocess_v40_ws128/preprocessed/preprocessor.pkl preprocessor_128.pkl
 
+# Link ws64 model and preprocessor
+ln -s ../../output/experiments/preprocess_v41_ws64/models models_64
+ln -s ../../output/experiments/preprocess_v41_ws64/preprocessed/preprocessor.pkl preprocessor_64.pkl
 # Link config file
-ln -s ../../config/config_v40_ws128.yaml config_ws128.yaml
+ln -s ../../config/config_v40_ws64.yaml config_ws64.yaml
 
 # Create a dummy kaggle_evaluation link if it doesn't exist, for local testing
 if [ ! -d "kaggle_evaluation" ]; then
     ln -s ../../data/kaggle_evaluation kaggle_evaluation
 fi
+

@@ -114,7 +114,7 @@ def predict_one(sequence: pl.DataFrame, demographics: pl.DataFrame) -> str:
             data_64["tof_windows"],
         ]
         
-        preds_64 = [model.predict(inputs_64, verbose=0) for model in models_64]
+        preds_64 = [model.predict(inputs_64, verbose=0).mean(axis=0) for model in models_64]
         avg_pred_64 = np.mean(preds_64, axis=0)
         all_final_preds.append(avg_pred_64)
         logger.info(f"ws64 prediction completed. Shape: {avg_pred_64.shape}")
@@ -133,7 +133,7 @@ def predict_one(sequence: pl.DataFrame, demographics: pl.DataFrame) -> str:
             data_128["tof_windows"],
         ]
 
-        preds_128 = [model.predict(inputs_128, verbose=0) for model in models_128]
+        preds_128 = [model.predict(inputs_128, verbose=0).mean(axis=0) for model in models_128]
         avg_pred_128 = np.mean(preds_128, axis=0)
         all_final_preds.append(avg_pred_128)
         logger.info(f"ws128 prediction completed. Shape: {avg_pred_128.shape}")
@@ -146,7 +146,7 @@ def predict_one(sequence: pl.DataFrame, demographics: pl.DataFrame) -> str:
     logger.info(f"Ensemble prediction completed. Shape: {final_avg_pred.shape}")
     
     # Convert prediction to label
-    label_index = np.argmax(final_avg_pred, axis=1)[0]
+    label_index = np.argmax(final_avg_pred)
     
     # Use the label encoder from one of the preprocessors (they should be identical)
     if hasattr(preprocessor_64, 'label_encoder') and preprocessor_64.label_encoder is not None:

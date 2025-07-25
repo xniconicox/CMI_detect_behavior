@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# マルチモーダル学習実行スクリプト（v40モデル用）
-# 使用方法: ./scripts/run_multimodal_training_v40.sh
+# マルチモーダル学習実行スクリプト（v41モデル用）
+# 使用方法: ./scripts/run_multimodal_training_v41.sh
 # 64と128の窓サイズで連続実行します
 
 set -e # エラー時に停止
@@ -9,8 +9,8 @@ set -e # エラー時に停止
 # ============================================================
 # 固定設定
 # ============================================================
-TRAINER_NAME="multimodal_v40"
-MODEL_NAME="multimodal_model_v40"
+TRAINER_NAME="multimodal_v41"
+MODEL_NAME="multimodal_model_v41"
 EPOCHS=50
 BATCH_SIZE=32
 GPU_MEMORY_GROWTH=true
@@ -19,20 +19,20 @@ SAVE_LOGS=true
 # ============================================================
 # メインループ
 # ============================================================
-# for WS in 64 128; do
-for WS in 128; do
+for WS in 64 128; do
+# for WS in 128; do
 
     # ============================================================
     # 動的設定
     # ============================================================
-    EXPERIMENT_NAME="preprocess_v40_ws${WS}"
+    EXPERIMENT_NAME="preprocess_v41_ws${WS}"
     CONFIG_PATH="./config/config_v40_ws${WS}.yaml"
 
     # ============================================================
     # 環境設定 & データ確認
     # ============================================================
     echo "=================================================="
-    echo "🚀 マルチモーダル学習開始 (v40モデル - ws${WS})"
+    echo "🚀 マルチモーダル学習開始 (v41モデル - ws${WS})"
     echo "=================================================="
     echo "実験名: $EXPERIMENT_NAME"
     echo "設定ファイル: $CONFIG_PATH"
@@ -76,11 +76,11 @@ for WS in 128; do
 
     PYTHON_SCRIPT="
 import yaml
-from src.trainers.multimodal_trainer_v40 import MultimodalTrainerV40
+from src.trainers.multimodal_trainer_v41 import MultimodalTrainerV41
 with open('$CONFIG_PATH', 'r') as f:
     config = yaml.safe_load(f)
 train_params = config.get('training_params', {})
-trainer = MultimodalTrainerV40('$EXPERIMENT_NAME')
+trainer = MultimodalTrainerV41('$EXPERIMENT_NAME')
 data = trainer.load_all_data()
 history = trainer.train_cross_validation(
     data,
@@ -102,7 +102,7 @@ print('学習完了！ (ws${WS})')
         python -c "$PYTHON_SCRIPT"
     fi
 
-    echo "✅ マルチモーダル学習完了 (v40モデル - ws${WS})"
+    echo "✅ マルチモーダル学習完了 (v41モデル - ws${WS})"
 
 done
 

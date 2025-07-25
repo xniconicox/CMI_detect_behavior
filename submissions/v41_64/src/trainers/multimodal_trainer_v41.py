@@ -8,8 +8,9 @@ ToFイベント特徴量や温度勾配特徴量などの拡張タブular特徴�
 """
 
 from __future__ import annotations
-
+import re
 import os
+
 import json
 import pickle
 from pathlib import Path
@@ -30,8 +31,8 @@ import tensorflow as tf
 from tensorflow import keras
 
 
-class MultimodalTrainerV40:
-    """多モダリティモデル学習管理クラス（v40）"""
+class MultimodalTrainerV41:
+    """多モダリティモデル学習管理クラス（v41）"""
 
     def __init__(self, experiment_name: str = "multimodal") -> None:
         self.experiment_name = experiment_name
@@ -77,6 +78,9 @@ class MultimodalTrainerV40:
         """
         print("前処理済みデータを読み込み中...")
 
+        def _remove_flip_suffix(subject):
+            # 末尾の"_flip"を除去
+            return re.sub(r"_flip$", "", str(subject))
         def _load(name: str) -> np.ndarray:
             npy = self.data_dir / f"{name}.npy"
             pkl = self.data_dir / f"{name}.pkl"
@@ -97,7 +101,7 @@ class MultimodalTrainerV40:
 
         if isinstance(info, list) and len(info) > 0 and isinstance(info[0], dict):
             groups = np.array([
-                d.get("subject") for d in info
+                _remove_flip_suffix(d.get("subject")) for d in info
             ])
         else:
             groups = np.asarray(info)
@@ -326,7 +330,7 @@ class MultimodalTrainerV40:
             fold_histories.append(history)
             
             # モデル保存
-            model_path = self.model_dir / f"multimodal_model_v40_fold{fold}.keras"
+            model_path = self.model_dir / f"multimodal_model_v41_fold{fold}.keras"
             model.save(model_path)
             print(f"モデル保存: {model_path}")
             
@@ -487,7 +491,7 @@ class MultimodalTrainerV40:
 
         # プロット設定
         fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('Training Curves (Multimodal Model V40)', fontsize=16)
+        fig.suptitle('Training Curves (Multimodal Model V41)', fontsize=16)
 
         metrics = ['loss', 'accuracy']
         for i, metric in enumerate(metrics):
@@ -605,7 +609,7 @@ class MultimodalTrainerV40:
 
 
 if __name__ == "__main__":
-    trainer = MultimodalTrainerV40()
+    trainer = MultimodalTrainerV41()
     try:
         data = trainer.load_all_data()
         trainer.train(data, epochs=5)

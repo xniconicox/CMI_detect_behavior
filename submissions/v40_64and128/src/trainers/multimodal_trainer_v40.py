@@ -359,8 +359,9 @@ class MultimodalTrainerV40:
         self.plot_training_curves(fold_histories)
         self.plot_cross_validation_results(cv_results)
         
-        # 最後のfoldのモデルをself.modelにセット
+        # 最後のfoldのモデルと履歴をselfにセット
         self.model = model
+        self.history = fold_histories[-1] if fold_histories else None
         
         return cv_results
 
@@ -441,7 +442,8 @@ class MultimodalTrainerV40:
             save_path = Path(path)
 
         if self.history is None:
-            raise ValueError("history is not set")
+            print("⚠️  history is not set, skipping training history save")
+            return save_path
 
         self._save_history(self.history, save_path)
         return save_path

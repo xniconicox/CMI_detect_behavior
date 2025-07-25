@@ -256,8 +256,9 @@ class TabularFeatureBuilder:
                 end = min(m["end_idx"], arr.shape[0])
                 flags.append(arr[start:end].mean(axis=0))
             flag_array = np.vstack(flags)
-            if flag_array.any():
-                feats.append(flag_array)
+            # if flag_array.any():
+            #     feats.append(flag_array)
+            feats.append(flag_array)
 
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])

@@ -46,6 +46,6 @@ for WS in 64 128; do
     python -m scripts.run_preprocessing \
         --experiment-name "${EXPERIMENT}_ws${WS}" \
         --config "$CONFIG" \
-        --use-cache \
         --mode "$MODE"
+        # --use-cache \
 done

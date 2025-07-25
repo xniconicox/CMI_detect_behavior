@@ -1,5 +1,5 @@
 data_dir: "data"
-cache_dir: "cache"
+cache_dir: "cache_ws128"
 output_dir: "output/experiments"
 
 # preprocessing hyperparameters

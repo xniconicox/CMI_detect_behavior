@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 def load_model_and_preprocessor():
     """Load ws64 model and preprocessor."""
     if is_kaggle():
-        base_path = Path("/kaggle/input/cmi-v40-ws64")
+        base_path = Path("/kaggle/input/cmi-v41-ws64")
         models_dir = base_path / "models_64"
         preprocessor_path = base_path / "preprocessor_64.pkl"
-        config_path = base_path / "config_ws64.yaml"
+        config_path = base_path / "config_v40_ws64.yaml"
     else:
         models_dir = Path("models_64")
         preprocessor_path = Path("preprocessor_64.pkl")
-        config_path = Path("config_ws64.yaml")
+        config_path = Path("config_v40_ws64.yaml")
 
     logger.info("Loading configuration...")
     config = load_config(config_path) if config_path.exists() else None
@@ -40,7 +40,7 @@ def load_model_and_preprocessor():
     logger.info("Loading models...")
     models = []
     for fold in range(1, 6):
-        model_path = models_dir / f"multimodal_model_v40_fold{fold}.keras"
+        model_path = models_dir / f"multimodal_model_v41_fold{fold}.keras"
         if model_path.exists():
             models.append(tf.keras.models.load_model(model_path))
         else:

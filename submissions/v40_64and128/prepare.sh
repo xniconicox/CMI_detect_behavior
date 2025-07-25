@@ -18,11 +18,11 @@ cp -p ../../src/utils/io_utils.py ./src/utils/
 
 
 # Link models and preprocessors for both window sizes
-ln -s ../../output/experiments/preprocess_v2_ws64/models models_64
-ln -s ../../output/experiments/preprocess_v2_ws64/preprocessed/preprocessor.pkl preprocessor_64.pkl
+ln -s ../../output/experiments/preprocess_v40_ws64/models models_64
+ln -s ../../output/experiments/preprocess_v40_ws64/preprocessed/preprocessor.pkl preprocessor_64.pkl
 
-ln -s ../../output/experiments/preprocess_v2_ws128/models models_128
-ln -s ../../output/experiments/preprocess_v2_ws128/preprocessed/preprocessor.pkl preprocessor_128.pkl
+ln -s ../../output/experiments/preprocess_v40_ws128/models models_128
+ln -s ../../output/experiments/preprocess_v40_ws128/preprocessed/preprocessor.pkl preprocessor_128.pkl
 
 # Link config files for both window sizes
 ln -s ../../config/config_v40_ws64.yaml config_ws64.yaml

@@ -28,7 +28,7 @@ preprocessing:
   tof_height: 8
   tof_width: 8
   use_world_acc: true
-  use_handedness_augmentation: true
+  use_handedness_augmentation: false
 
 
 sensor_acc_cols:
