@@ -67,9 +67,18 @@ def predict_one(sequence: pl.DataFrame, demographics: pl.DataFrame) -> str:
     ]
 
     preds = [model.predict(inputs, verbose=0) for model in models]
+    # アンサンブル平均 (n_models, n_windows, n_classes) → (n_windows, n_classes)
     avg_pred = np.mean(preds, axis=0)
 
-    label_index = np.argmax(avg_pred, axis=1)[0]
+    # --- ウィンドウ集約 ---
+    # avg_pred 形状: (n_windows, n_classes) または (n_classes,)（ウィンドウが1つの場合）
+    if avg_pred.ndim == 2:  # ウィンドウ数 > 1
+        # 各ウィンドウの確率を平均してシーケンス単位の確率を算出
+        seq_probs = avg_pred.mean(axis=0)
+    else:  # ウィンドウが1つ
+        seq_probs = avg_pred
+
+    label_index = int(np.argmax(seq_probs))
     if hasattr(preprocessor, "label_encoder") and preprocessor.label_encoder is not None:
         return preprocessor.label_encoder.inverse_transform([label_index])[0]
     return f"gesture_{label_index}"

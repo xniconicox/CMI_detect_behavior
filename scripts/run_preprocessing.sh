@@ -5,7 +5,7 @@
 #   ./scripts/run_preprocessing.sh exp1
 #   ./scripts/run_preprocessing.sh exp1 --mode predict --no-cache
 
-EXPERIMENT="preprocess_v40"
+EXPERIMENT="preprocess_check"
 MODE="train"
 # CONFIG_PATH="config/config_v2_ws64.yaml"
 USE_CACHE=false
