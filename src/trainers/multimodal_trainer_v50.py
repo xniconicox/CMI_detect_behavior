@@ -1,3 +1,4 @@
+
 """多モダリティ学習用トレーナー
 
 IMUウィンドウ、人口統計、表形式特徴量、ToFボクセルの4種類の前処理済みデータに加え、
@@ -32,9 +33,10 @@ from tensorflow import keras
 
 
 class MultimodalTrainerV50:
-    """多モダリティモデル学習管理クラス（v50）"""
+    """Minimal trainer that builds a model with mask input."""
 
-    def __init__(self, experiment_name: str = "multimodal") -> None:
+
+    def __init__(self, experiment_name: str = "multimodal") -> None
         self.experiment_name = experiment_name
         self.base_dir = Path("output/experiments") / experiment_name
         self.data_dir = self.base_dir / "preprocessed"
