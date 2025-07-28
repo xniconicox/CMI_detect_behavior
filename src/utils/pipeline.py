@@ -106,6 +106,69 @@ class WindowTensorBuilder:
         return result
 
 
+class SequenceTensorBuilder:
+    """Generate padded sequence tensors with masks."""
+
+    def __init__(self, config: dict | None = None) -> None:
+        self.config = config or load_config()
+        pp = self.config.get("preprocessing", {})
+        self.min_len = pp.get("min_sequence_length", 10)
+        self.padding_value = pp.get("padding_value", 0.0)
+        self.sensor_cols = (
+            self.config.get("sensor_acc_cols", [])
+            + self.config.get("sensor_rot_cols", [])
+            + self.config.get("sensor_thm_cols", [])
+        )
+        if pp.get("use_world_acc", False):
+            world_acc_cols = [f"acc_w_{ax}" for ax in "xyz"] + [f"lin_acc_{ax}" for ax in "xyz"]
+            self.sensor_cols.extend(world_acc_cols)
+        self.demographics_cols = self.config.get("demographics_cols", [])
+
+    def build(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict]]:
+        groups = []
+        for key, g in df.groupby(["subject", "sequence_id"]):
+            if len(g) >= self.min_len:
+                groups.append((key, g))
+        if not groups:
+            return (
+                np.empty((0, 0, len(self.sensor_cols)), dtype=np.float32),
+                np.empty((0, len(self.demographics_cols)), dtype=np.float32),
+                np.empty((0,)),
+                np.empty((0, 0), dtype=bool),
+                [],
+            )
+        max_len = max(len(g) for _, g in groups)
+
+        X_seq = []
+        X_demo = []
+        y = []
+        masks = []
+        info = []
+        for (subject, seq_id), g in groups:
+            sensor = g[self.sensor_cols].to_numpy(dtype=np.float32)
+            demo = g[self.demographics_cols].iloc[0].to_numpy(dtype=np.float32)
+            gesture = g["gesture"].iloc[0] if "gesture" in g.columns else -1
+
+            mask = np.zeros(max_len, dtype=bool)
+            mask[: len(sensor)] = True
+            if len(sensor) < max_len:
+                pad = np.full((max_len - len(sensor), sensor.shape[1]), self.padding_value, dtype=np.float32)
+                sensor = np.vstack([sensor, pad])
+            X_seq.append(sensor)
+            X_demo.append(demo)
+            y.append(gesture)
+            masks.append(mask)
+            info.append({"subject": subject, "sequence_id": seq_id, "length": len(g)})
+
+        return (
+            np.stack(X_seq),
+            np.stack(X_demo),
+            np.asarray(y),
+            np.stack(masks),
+            info,
+        )
+
+
 class TabularFeatureBuilder:
     """Build tabular features from IMU windows."""
 
@@ -379,6 +442,7 @@ class Preprocessor:
             use_world_acc = pp.get("use_world_acc", False)
         self.use_handedness_augmentation = pp.get("use_handedness_augmentation", False)
         self.win_builder = WindowTensorBuilder(self.config)
+        self.seq_builder = SequenceTensorBuilder(self.config)
         self.tab_builder = TabularFeatureBuilder(self.config)
         self.tof_builder = ToFVoxelBuilder(self.config)
         self.tof_win_builder = ToFWindowBuilder(self.config)
@@ -708,6 +772,7 @@ class Preprocessor:
         use_cache: bool = True,
         *,
         autoencoder_model=None,
+        use_windows: bool = True,
     ) -> dict:
         """Transform dataframe using fitted scalers.
 
@@ -720,11 +785,15 @@ class Preprocessor:
         autoencoder_model : optional
             Pre-trained model used for reconstruction error features. The
             object must provide ``predict`` returning reconstructed windows.
+        use_windows : bool, default True
+            If ``False``, return padded sequence tensors instead of sliding windows.
 
         Returns
         -------
         dict
-            Dictionary containing processed arrays.
+            Dictionary containing processed arrays. When ``use_windows=False``
+            the keys ``sequences`` and ``sequence_mask`` are returned instead of
+            ``windows``.
         """
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
@@ -732,8 +801,13 @@ class Preprocessor:
         df_proc = self._maybe_clean(df)
         if self.use_handedness_augmentation:
             df_proc = augment_handedness_flip(df_proc)
-        windows = self.win_builder.build(df_proc, use_cache=use_cache)
-        X_sensor, X_demo, y, info = windows
+        if use_windows:
+            windows = self.win_builder.build(df_proc, use_cache=use_cache)
+            X_sensor, X_demo, y, info = windows
+            seq_mask = None
+        else:
+            seqs = self.seq_builder.build(df_proc)
+            X_sensor, X_demo, y, seq_mask, info = seqs
         
         # センサー別の適切な欠損値処理、外れ値処理、正規化
         logger.info("Window tensor shape %s", X_sensor.shape)
@@ -807,15 +881,28 @@ class Preprocessor:
         else:
             y_encoded = y
         
-        return {
-            "windows": X_sensor_normalized,
+        result = {
             "demographics": X_demo_normalized,
-            "tabular": tab_normalized,
-            "tof_voxel": tof_tensor_norm,  # 正規化済みデータを使用
-            "tof_windows": tof_windows_norm,  # 正規化済みデータを使用
             "labels": y_encoded,
             "info": info,
         }
+        if use_windows:
+            result.update(
+                {
+                    "windows": X_sensor_normalized,
+                    "tabular": tab_normalized,
+                    "tof_voxel": tof_tensor_norm,
+                    "tof_windows": tof_windows_norm,
+                }
+            )
+        else:
+            result.update(
+                {
+                    "sequences": X_sensor_normalized,
+                    "sequence_mask": seq_mask,
+                }
+            )
+        return result
 
     def fit_transform(
         self,
@@ -823,10 +910,14 @@ class Preprocessor:
         use_cache: bool = True,
         *,
         autoencoder_model=None,
+        use_windows: bool = True,
     ) -> dict:
         self.fit(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
         return self.transform(
-            df, use_cache=use_cache, autoencoder_model=autoencoder_model
+            df,
+            use_cache=use_cache,
+            autoencoder_model=autoencoder_model,
+            use_windows=use_windows,
         )
         """Fit the preprocessor and transform the data in one call.
 
@@ -839,11 +930,13 @@ class Preprocessor:
         autoencoder_model : optional
             Pre-trained model with ``predict`` returning reconstructed
             windows.
+        use_windows : bool, default True
+            Whether to return sliding windows or padded sequences.
 
         Returns
         -------
         dict
-            Dictionary of processed arrays.
+            Dictionary of processed arrays. Keys depend on ``use_windows``.
         """
 
         self.fit(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
