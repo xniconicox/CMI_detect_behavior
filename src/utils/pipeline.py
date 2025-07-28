@@ -36,7 +36,42 @@ from .feature_engineering import (
     compute_tof_event_features,
     compute_temperature_gradient_features,
 )
+
 from .imu import add_world_acc_features
+
+
+def pad_sequences(seqs: list[np.ndarray], value: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """Pad variable length sequences and return mask."""
+    if not seqs:
+        return np.empty((0, 0)), np.empty((0, 0), dtype=bool)
+
+    maxlen = max(s.shape[0] for s in seqs)
+    feat_dim = seqs[0].shape[1]
+    batch = np.full((len(seqs), maxlen, feat_dim), value, dtype=seqs[0].dtype)
+    mask = np.zeros((len(seqs), maxlen), dtype=bool)
+    for i, s in enumerate(seqs):
+        length = s.shape[0]
+        batch[i, :length] = s
+        mask[i, :length] = True
+    return batch, mask
+
+
+def extract_sequences_with_demographics(
+    df: pd.DataFrame,
+    sensor_cols: list[str],
+    demo_cols: list[str],
+) -> tuple[list[np.ndarray], np.ndarray, np.ndarray, list[dict]]:
+    """Return raw sequences grouped by subject and sequence_id."""
+    seqs, demos, labels, info = [], [], [], []
+    for (subject, seq_id), g in df.groupby(["subject", "sequence_id"]):
+        seqs.append(g[sensor_cols].to_numpy(np.float32))
+        demos.append(g[demo_cols].iloc[0].to_numpy(np.float32))
+        if "gesture" in g.columns:
+            labels.append(g["gesture"].iloc[0])
+        else:
+            labels.append(-1)
+        info.append({"subject": subject, "sequence_id": seq_id, "length": len(g)})
+    return seqs, np.asarray(demos, dtype=np.float32), np.asarray(labels), info
 
 
 logger = logging.getLogger(__name__)
@@ -107,10 +142,13 @@ class WindowTensorBuilder:
 
 
 class TabularFeatureBuilder:
-    """Build tabular features from IMU windows."""
+    """Build tabular features from IMU windows or sequences."""
 
-    def __init__(self, config: dict | None = None) -> None:
+    def __init__(self, config: dict | None = None, *, use_windows: bool | None = None) -> None:
         self.config = config or load_config()
+        if use_windows is None:
+            use_windows = self.config.get("use_windows", True)
+        self.use_windows = use_windows
         pp = self.config.get("preprocessing", {})
         self.sampling_rate = pp.get("sampling_rate", 50.0)
         self.fft_bands = pp.get("fft_bands", [])
@@ -134,6 +172,7 @@ class TabularFeatureBuilder:
         self,
         df: pd.DataFrame,
         windows=None,
+        sequences=None,
         use_cache: bool = True,
         *,
         use_wavelet: bool | None = None,
@@ -150,6 +189,8 @@ class TabularFeatureBuilder:
             Raw sensor dataframe.
         windows : tuple or None
             Precomputed window tensors from :class:`WindowTensorBuilder`.
+        sequences : tuple or None
+            Precomputed sequence arrays when ``use_windows`` is False.
         use_cache : bool, default True
             If True, reuse cached results when available.
         use_wavelet : bool | None, optional
@@ -185,34 +226,90 @@ class TabularFeatureBuilder:
                 with open(self.cache_file, "rb") as f:
                     return pickle.load(f)
 
-        if windows is None:
-            X_sensor, X_demo, y, info = self.window_builder.build(df, use_cache=use_cache)
+        if self.use_windows:
+            if windows is None:
+                X_sensor, X_demo, y, info = self.window_builder.build(df, use_cache=use_cache)
+            else:
+                X_sensor, X_demo, y, info = windows
+            X_sensor_clean = X_sensor
         else:
-            X_sensor, X_demo, y, info = windows
-            
+            if sequences is None:
+                seqs, X_demo, y, info = extract_sequences_with_demographics(
+                    df,
+                    self.window_builder.sensor_cols,
+                    self.window_builder.demographics_cols,
+                )
+            else:
+                seqs, X_demo, y, info = sequences
+            X_sensor_clean, _ = pad_sequences(
+                seqs, value=self.window_builder.padding_value
+            )
+
         # 外れ値処理はPreprocessorで行うため、ここでは不要
-        X_sensor_clean = X_sensor
-        
-        stats = compute_basic_statistics(X_sensor_clean)
-        peaks = compute_peak_features(X_sensor_clean)
-        fft = compute_fft_band_energy(
-            X_sensor_clean, fs=self.sampling_rate, bands=self.fft_bands
-        )
+        if self.use_windows:
+            base = X_sensor_clean
+            stats = compute_basic_statistics(base)
+            peaks = compute_peak_features(base)
+            fft = compute_fft_band_energy(
+                base, fs=self.sampling_rate, bands=self.fft_bands
+            )
+        else:
+            stats = np.vstack(
+                [compute_basic_statistics(s[np.newaxis, :, :])[0] for s in seqs]
+            )
+            peaks = np.vstack(
+                [compute_peak_features(s[np.newaxis, :, :])[0] for s in seqs]
+            )
+            fft = np.vstack(
+                [
+                    compute_fft_band_energy(
+                        s[np.newaxis, :, :],
+                        fs=self.sampling_rate,
+                        bands=self.fft_bands,
+                    )[0]
+                    for s in seqs
+                ]
+            )
 
         # decide whether to compute optional features
         feats = [stats, peaks, fft]
         if use_wavelet:
-            wave = compute_wavelet_features(
-                X_sensor_clean, wavelet=self.wavelet, level=self.wavelet_level
-            )
+            if self.use_windows:
+                wave = compute_wavelet_features(
+                    base, wavelet=self.wavelet, level=self.wavelet_level
+                )
+            else:
+                wave = np.vstack(
+                    [
+                        compute_wavelet_features(
+                            s[np.newaxis, :, :],
+                            wavelet=self.wavelet,
+                            level=self.wavelet_level,
+                        )[0]
+                        for s in seqs
+                    ]
+                )
             feats.append(wave)
         if use_tda:
-            tda = compute_persistence_image_features_batch(
-                X_sensor_clean,
-                dimension=self.tda_dimension,
-                n_bins=self.tda_bins,
-                sigma=self.tda_sigma,
-            )
+            if self.use_windows:
+                tda = compute_persistence_image_features_batch(
+                    base,
+                    dimension=self.tda_dimension,
+                    n_bins=self.tda_bins,
+                    sigma=self.tda_sigma,
+                )
+            else:
+                tda = np.vstack(
+                    [
+                        compute_persistence_image_features_batch(
+                            s[np.newaxis, :, :],
+                            dimension=self.tda_dimension,
+                            n_bins=self.tda_bins,
+                            sigma=self.tda_sigma,
+                        )[0]
+                        for s in seqs
+                    ]
+                )
             feats.append(tda)
         if use_tof_event:
             X_tof, _ = self.tof_win_builder.build(df, use_cache=use_cache)
@@ -224,14 +321,34 @@ class TabularFeatureBuilder:
                 sensor_config = self.window_builder.sensor_cols
                 idx = [sensor_config.index(c) for c in thm_cols if c in sensor_config]
                 if idx:
-                    temp_feat = compute_temperature_gradient_features(
-                        X_sensor_clean[:, :, idx]
-                    )
+                    if self.use_windows:
+                        temp_feat = compute_temperature_gradient_features(
+                            base[:, :, idx]
+                        )
+                    else:
+                        temp_feat = np.vstack(
+                            [
+                                compute_temperature_gradient_features(
+                                    s[:, idx]
+                                )
+                                for s in seqs
+                            ]
+                        )
                     feats.append(temp_feat)
         if autoencoder_model is not None:
-            ae_err = compute_autoencoder_reconstruction_error(
-                X_sensor_clean, autoencoder_model
-            ).reshape(len(X_sensor_clean), -1)
+            if self.use_windows:
+                ae_err = compute_autoencoder_reconstruction_error(
+                    base, autoencoder_model
+                ).reshape(len(base), -1)
+            else:
+                ae_err = np.vstack(
+                    [
+                        compute_autoencoder_reconstruction_error(
+                            s[np.newaxis, :, :], autoencoder_model
+                        )[0]
+                        for s in seqs
+                    ]
+                )
             feats.append(ae_err)
             
         # --- 欠損センサフラグ (per-window mean) ----------------------
@@ -252,13 +369,15 @@ class TabularFeatureBuilder:
             flags = []
             for m in info:
                 arr = grouped[(m["subject"], m["sequence_id"])]
-                start = m["start_idx"]
-                end = min(m["end_idx"], arr.shape[0])
-                flags.append(arr[start:end].mean(axis=0))
+                if self.use_windows:
+                    start = m["start_idx"]
+                    end = min(m["end_idx"], arr.shape[0])
+                    flags.append(arr[start:end].mean(axis=0))
+                else:
+                    flags.append(arr.mean(axis=0))
             flag_array = np.vstack(flags)
-            # if flag_array.any():
-            #     feats.append(flag_array)
-            feats.append(flag_array)
+            if flag_array.any():
+                feats.append(flag_array)
 
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])
@@ -372,14 +491,18 @@ class Preprocessor:
         use_basic_cleaning: bool = True,
         use_interp_cleaning: bool = True,
         use_world_acc: bool | None = None,
+        use_windows: bool | None = None,
     ) -> None:
         self.config = config or load_config()
         pp = self.config.get("preprocessing", {})
         if use_world_acc is None:
             use_world_acc = pp.get("use_world_acc", False)
+        if use_windows is None:
+            use_windows = self.config.get("use_windows", True)
+        self.use_windows = use_windows
         self.use_handedness_augmentation = pp.get("use_handedness_augmentation", False)
         self.win_builder = WindowTensorBuilder(self.config)
-        self.tab_builder = TabularFeatureBuilder(self.config)
+        self.tab_builder = TabularFeatureBuilder(self.config, use_windows=self.use_windows)
         self.tof_builder = ToFVoxelBuilder(self.config)
         self.tof_win_builder = ToFWindowBuilder(self.config)
 
@@ -635,8 +758,20 @@ class Preprocessor:
         df_proc = self._maybe_clean(df)
         if self.use_handedness_augmentation:
             df_proc = augment_handedness_flip(df_proc)
-        windows = self.win_builder.build(df_proc, use_cache=use_cache)
-        X_sensor, X_demo, y, _ = windows
+        if self.use_windows:
+            windows = self.win_builder.build(df_proc, use_cache=use_cache)
+            X_sensor, X_demo, y, info = windows
+            seq_mask = None
+        else:
+            seqs, X_demo, y, info = extract_sequences_with_demographics(
+                df_proc,
+                self.win_builder.sensor_cols,
+                self.win_builder.demographics_cols,
+            )
+            X_sensor, seq_mask = pad_sequences(
+                seqs,
+                value=self.win_builder.padding_value,
+            )
         
         # ラベルエンコーディング
         if "gesture" in df.columns:
@@ -658,13 +793,21 @@ class Preprocessor:
         self.demo_scaler.fit(X_demo_clean)
         
         # 表形式特徴量の正規化
-        processed_windows = (X_sensor_clean, X_demo, y, windows[3])
-        tab, _, _ = self.tab_builder.build(
-            df_proc,
-            windows=processed_windows,
-            use_cache=use_cache,
-            autoencoder_model=autoencoder_model,
-        )
+        processed_data = (X_sensor_clean, X_demo, y, info)
+        if self.use_windows:
+            tab, _, _ = self.tab_builder.build(
+                df_proc,
+                windows=processed_data,
+                use_cache=use_cache,
+                autoencoder_model=autoencoder_model,
+            )
+        else:
+            tab, _, _ = self.tab_builder.build(
+                df_proc,
+                sequences=processed_data,
+                use_cache=use_cache,
+                autoencoder_model=autoencoder_model,
+            )
         # --- クリップ処理を追加 ---
         tab_clean = np.nan_to_num(tab, nan=0.0)
         # クリップ閾値をfit時に保存
@@ -732,8 +875,20 @@ class Preprocessor:
         df_proc = self._maybe_clean(df)
         if self.use_handedness_augmentation:
             df_proc = augment_handedness_flip(df_proc)
-        windows = self.win_builder.build(df_proc, use_cache=use_cache)
-        X_sensor, X_demo, y, info = windows
+        if self.use_windows:
+            windows = self.win_builder.build(df_proc, use_cache=use_cache)
+            X_sensor, X_demo, y, info = windows
+            seq_mask = None
+        else:
+            seqs, X_demo, y, info = extract_sequences_with_demographics(
+                df_proc,
+                self.win_builder.sensor_cols,
+                self.win_builder.demographics_cols,
+            )
+            X_sensor, seq_mask = pad_sequences(
+                seqs,
+                value=self.win_builder.padding_value,
+            )
         
         # センサー別の適切な欠損値処理、外れ値処理、正規化
         logger.info("Window tensor shape %s", X_sensor.shape)
@@ -748,13 +903,21 @@ class Preprocessor:
         X_demo_normalized = self.demo_scaler.transform(X_demo_clean)
         
         # 表形式特徴量の正規化
-        processed_windows = (X_sensor_clean, X_demo, y, info)
-        tab, _, _ = self.tab_builder.build(
-            df_proc,
-            windows=processed_windows,
-            use_cache=use_cache,
-            autoencoder_model=autoencoder_model,
-        )
+        processed_data = (X_sensor_clean, X_demo, y, info)
+        if self.use_windows:
+            tab, _, _ = self.tab_builder.build(
+                df_proc,
+                windows=processed_data,
+                use_cache=use_cache,
+                autoencoder_model=autoencoder_model,
+            )
+        else:
+            tab, _, _ = self.tab_builder.build(
+                df_proc,
+                sequences=processed_data,
+                use_cache=use_cache,
+                autoencoder_model=autoencoder_model,
+            )
         # 欠損値処理と外れ値処理を追加してfit時とtransform時で一貫性を保つ
         tab_clean = np.nan_to_num(tab, nan=0.0)
         # --- クリップ処理をfitで保存した閾値で適用 ---
@@ -806,7 +969,7 @@ class Preprocessor:
                 logger.info(f"ラベルエンコーディング適用: {np.unique(y_encoded)}")
         else:
             y_encoded = y
-        
+
         return {
             "windows": X_sensor_normalized,
             "demographics": X_demo_normalized,
@@ -815,6 +978,7 @@ class Preprocessor:
             "tof_windows": tof_windows_norm,  # 正規化済みデータを使用
             "labels": y_encoded,
             "info": info,
+            "mask": seq_mask,
         }
 
     def fit_transform(
@@ -858,6 +1022,7 @@ class Preprocessor:
             "use_basic_cleaning": self.use_basic_cleaning,
             "use_interp_cleaning": self.use_interp_cleaning,
             "use_world_acc": self.use_world_acc,
+            "use_windows": self.use_windows,
             "use_handedness_augmentation": self.use_handedness_augmentation,
             "sensor_scaler": self.sensor_scaler,
             "demo_scaler": self.demo_scaler,
@@ -884,6 +1049,7 @@ class Preprocessor:
             use_basic_cleaning=data.get("use_basic_cleaning", True),
             use_interp_cleaning=data.get("use_interp_cleaning", True),
             use_world_acc=data.get("use_world_acc"),
+            use_windows=data.get("use_windows", True),
         )
         obj.sensor_scaler = data["sensor_scaler"]
         obj.demo_scaler = data["demo_scaler"]
