@@ -98,7 +98,8 @@ def test_preprocessor_cache_and_transform(tmp_path: Path):
 
     assert result["windows"].shape == (1, 16, 12)
     assert result["demographics"].shape == (1, 7)
-    assert result["tabular"].shape == (1, 147)
+    # assert result["tabular"].shape == (1, 144)
+    assert result["tabular"].shape == (1, 147)  # 旧: (1, 144)\
     assert result["tof_voxel"].shape == (len(df), 5, 8, 8)
     assert result["tof_windows"].shape == (1, 16, 5, 8, 8)
     assert result["labels"].shape == (1,)
@@ -297,7 +298,8 @@ def test_new_feature_options(tmp_path: Path):
     ae = DummyAE()
     result = pp.fit_transform(df, autoencoder_model=ae)
 
-    assert result["tabular"].shape[1] == 164
+    # assert result["tabular"].shape[1] == 161
+    assert result["tabular"].shape[1] == 164  # 旧: 161
 
 
 def test_handedness_augmentation(tmp_path: Path):
