@@ -20,6 +20,13 @@ import pandas as pd
 import yaml
 
 from src.utils.pipeline import Preprocessor
+from src.utils.feature_engineering import (
+    compute_basic_statistics,
+    compute_peak_features,
+    compute_fft_band_energy,
+    compute_wavelet_features,
+    compute_persistence_image_features_batch,
+)
 
 
 # -------------------------------------------------------------
@@ -181,6 +188,63 @@ def build_tof_sequences(
     return tof_map, mask_map
 
 
+def build_tabular_features(
+    groups: List[tuple[tuple, pd.DataFrame]],
+    sensor_cols: List[str],
+    demo_cols: List[str],
+    stats: dict | None,
+    config: Dict[str, Any],
+    out_path: Path,
+) -> dict:
+    """Compute simple tabular features per sequence."""
+    feats = []
+    labels = []
+    for _, g in groups:
+        arr = g[sensor_cols].to_numpy(np.float32)
+        seq = arr[np.newaxis, :, :]
+        f = [
+            compute_basic_statistics(seq)[0],
+            compute_peak_features(seq)[0],
+            compute_fft_band_energy(
+                seq,
+                fs=config.get("sampling_rate", 50.0),
+                bands=config.get("fft_bands", []),
+            )[0],
+        ]
+        if config.get("use_wavelet_features", False):
+            f.append(
+                compute_wavelet_features(
+                    seq,
+                    wavelet=config.get("wavelet", "db4"),
+                    level=config.get("wavelet_level", 3),
+                )[0]
+            )
+        if config.get("use_tda_features", False):
+            f.append(
+                compute_persistence_image_features_batch(
+                    seq,
+                    dimension=config.get("tda_dimension", 1),
+                    n_bins=config.get("tda_bins", 8),
+                    sigma=config.get("tda_sigma", 0.1),
+                )[0]
+            )
+        feat_vec = np.hstack(f)
+        if demo_cols:
+            demo = g[demo_cols].mean().to_numpy(np.float32)
+            feat_vec = np.hstack([demo, feat_vec])
+        feats.append(feat_vec)
+        labels.append(g["gesture"].iloc[0] if "gesture" in g.columns else -1)
+    feats = np.asarray(feats, dtype=np.float32)
+    if stats is None:
+        mean = feats.mean(axis=0)
+        std = feats.std(axis=0)
+        std[std == 0] = 1.0
+        stats = {"mean": mean, "std": std}
+    norm = (feats - stats["mean"]) / stats["std"]
+    np.save(out_path, norm)
+    return {"features": norm, "labels": np.asarray(labels, dtype=np.int64), "stats": stats}
+
+
 # -------------------------------------------------------------
 # Main
 # -------------------------------------------------------------
@@ -224,6 +288,19 @@ def main() -> None:
             df_interp, depth, height, width, out_dir, "train"
         )
 
+        groups_interp = list(df_interp.groupby(["subject", "sequence_id"], sort=False))
+        demo_cols = config.get("demographics_cols", [])
+        tab_cfg = config.get("preprocessing", {})
+        tab_res = build_tabular_features(
+            groups_interp,
+            sensor_cols,
+            demo_cols,
+            None,
+            tab_cfg,
+            out_dir / "train_features.npy",
+        )
+        np.savez(out_dir / "tabular_stats.npz", mean=tab_res["stats"]["mean"], std=tab_res["stats"]["std"])
+
         np.save(out_dir / "train_labels.npy", y)
         with open(out_dir / "train_info.json", "w", encoding="utf-8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)
@@ -248,6 +325,20 @@ def main() -> None:
         )
         X_tof, tof_mask = build_tof_sequences(
             df_interp, depth, height, width, out_dir, "predict"
+        )
+
+        stats_npz = np.load(out_dir / "tabular_stats.npz")
+        stats = {"mean": stats_npz["mean"], "std": stats_npz["std"]}
+        groups_interp = list(df_interp.groupby(["subject", "sequence_id"], sort=False))
+        demo_cols = config.get("demographics_cols", [])
+        tab_cfg = config.get("preprocessing", {})
+        build_tabular_features(
+            groups_interp,
+            sensor_cols,
+            demo_cols,
+            stats,
+            tab_cfg,
+            out_dir / "predict_features.npy",
         )
 
         np.save(out_dir / "predict_labels.npy", y)
