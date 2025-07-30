@@ -2,7 +2,7 @@ data_dir: "data"
 cache_dir: "cache"
 output_dir: "output/experiments"
 use_windows: false
-experiment_name: preprocess_v51_anomaly
+experiment_name: preprocess_v52
 
 # preprocessing hyperparameters (no window mode)
 preprocessing:
