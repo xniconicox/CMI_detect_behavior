@@ -13,8 +13,8 @@ preprocessing:
   sampling_rate: 50.0
   # メモリ効率化のための設定
   n_jobs: 1  # 並列処理を無効化
-  chunk_size: 1000  # チャンクサイズ
-  max_sequence_length_limit: 2000  # 最大シーケンス長制限（メモリ制御用）
+  chunk_size: 500  # チャンクサイズ（500に削減）
+  max_sequence_length_limit: 1500  # 最大シーケンス長制限（2000から削減）
   fft_bands:
     - [0.5, 2]
     - [2, 5]
