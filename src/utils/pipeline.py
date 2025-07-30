@@ -762,7 +762,7 @@ class Preprocessor:
         Parameters
         ----------
         X_sensor : np.ndarray
-            センサーデータ
+            センサーデータ（2次元または3次元）
         percentile_low : float, default 0.5
             下位パーセンタイル（より厳しい外れ値検出）
         percentile_high : float, default 99.5
@@ -773,24 +773,47 @@ class Preprocessor:
             
         X_clean = X_sensor.copy()
         
-        # 各センサー軸ごとに外れ値を処理
-        for axis in range(X_clean.shape[2]):
-            axis_data = X_clean[:, :, axis]
-            
-            # パーセンタイルベースのクリッピング（ウィンザライゼーション）
-            q_low = np.percentile(axis_data, percentile_low)
-            q_high = np.percentile(axis_data, percentile_high)
-            
-            # 外れ値をクリップ
-            axis_data_clipped = np.clip(axis_data, q_low, q_high)
-            X_clean[:, :, axis] = axis_data_clipped
-            
-            # ログ出力（最初の数軸のみ）
-            if axis < 3:
-                outlier_count = np.sum((axis_data < q_low) | (axis_data > q_high))
-                outlier_ratio = outlier_count / axis_data.size * 100
-                if outlier_ratio > 0.1:  # 0.1%以上の場合のみログ
-                    logger.info(f"軸{axis}: 外れ値{outlier_count:,}個 ({outlier_ratio:.2f}%) をクリップ ({percentile_low}%～{percentile_high}%)")
+        # 2次元配列の場合（シーケンス×特徴量）
+        if len(X_clean.shape) == 2:
+            # 各特徴量軸ごとに外れ値を処理
+            for axis in range(X_clean.shape[1]):
+                axis_data = X_clean[:, axis]
+                
+                # パーセンタイルベースのクリッピング（ウィンザライゼーション）
+                q_low = np.percentile(axis_data, percentile_low)
+                q_high = np.percentile(axis_data, percentile_high)
+                
+                # 外れ値をクリップ
+                axis_data_clipped = np.clip(axis_data, q_low, q_high)
+                X_clean[:, axis] = axis_data_clipped
+                
+                # ログ出力（最初の数軸のみ）
+                if axis < 3:
+                    outlier_count = np.sum((axis_data < q_low) | (axis_data > q_high))
+                    outlier_ratio = outlier_count / axis_data.size * 100
+                    if outlier_ratio > 0.1:  # 0.1%以上の場合のみログ
+                        logger.info(f"軸{axis}: 外れ値{outlier_count:,}個 ({outlier_ratio:.2f}%) をクリップ ({percentile_low}%～{percentile_high}%)")
+        
+        # 3次元配列の場合（バッチ×時間×特徴量）
+        elif len(X_clean.shape) == 3:
+            # 各センサー軸ごとに外れ値を処理
+            for axis in range(X_clean.shape[2]):
+                axis_data = X_clean[:, :, axis]
+                
+                # パーセンタイルベースのクリッピング（ウィンザライゼーション）
+                q_low = np.percentile(axis_data, percentile_low)
+                q_high = np.percentile(axis_data, percentile_high)
+                
+                # 外れ値をクリップ
+                axis_data_clipped = np.clip(axis_data, q_low, q_high)
+                X_clean[:, :, axis] = axis_data_clipped
+                
+                # ログ出力（最初の数軸のみ）
+                if axis < 3:
+                    outlier_count = np.sum((axis_data < q_low) | (axis_data > q_high))
+                    outlier_ratio = outlier_count / axis_data.size * 100
+                    if outlier_ratio > 0.1:  # 0.1%以上の場合のみログ
+                        logger.info(f"軸{axis}: 外れ値{outlier_count:,}個 ({outlier_ratio:.2f}%) をクリップ ({percentile_low}%～{percentile_high}%)")
         
         return X_clean
 

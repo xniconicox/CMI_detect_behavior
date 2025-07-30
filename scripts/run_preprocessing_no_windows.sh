@@ -6,7 +6,7 @@
 set -e
 
 # 実験名を設定
-EXPERIMENT_NAME="preprocess_no_windows_anomaly"
+EXPERIMENT_NAME="preprocess_v51_anomaly"
 
 echo "=== 窓分割なし前処理開始 ==="
 echo "実験名: $EXPERIMENT_NAME"
@@ -14,8 +14,7 @@ echo "実験名: $EXPERIMENT_NAME"
 # 前処理実行
 python scripts/run_preprocessing_no_windows.py \
     --experiment-name $EXPERIMENT_NAME \
-    --config config/config_v2.yaml \
-    --use-cache \
+    --config config/config_v50.yaml \
     --mode train
 
 echo "=== 前処理完了 ==="

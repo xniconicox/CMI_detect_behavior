@@ -3,27 +3,32 @@ cache_dir: "cache"
 output_dir: "output/experiments"
 use_windows: false
 
-# preprocessing hyperparameters
+# preprocessing hyperparameters (no window mode)
 preprocessing:
-  window_size: 128
-  stride: 64
+  # window関連の設定はno window modeでは不要
+  # window_size: 128
+  # stride: 64
   min_sequence_length: 20
-  padding_value: 0.0
+  padding_value: -1.0  # ToFデータのパディング値と統一
   sampling_rate: 50.0
+  # メモリ効率化のための設定
+  n_jobs: 1  # 並列処理を無効化
+  chunk_size: 1000  # チャンクサイズ
+  max_sequence_length_limit: 2000  # 最大シーケンス長制限（メモリ制御用）
   fft_bands:
     - [0.5, 2]
     - [2, 5]
     - [5, 10]
     - [10, 20]
   wavelet: "db4"
-  wavelet_level: 3
+  wavelet_level: 2
   tda_dimension: 1
   tda_bins: 8
   tda_sigma: 0.1
   # 各特徴量計算の有無を制御
   use_wavelet_features: true
   use_tda_features: true
-  use_tof_event_features: true
+  use_tof_event_features: false
   use_temperature_gradient_features: true
   tof_depth: 5
   tof_height: 8

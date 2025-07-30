@@ -196,7 +196,7 @@ def compute_persistence_image_features(X_windows: np.ndarray, dimension:int=1, n
     return np.array(feats, dtype=np.float32)
 
 def compute_persistence_image_features_batch(
-    X_windows: np.ndarray, dimension: int = 2, n_bins: int = 16, sigma: float = 0.1
+    X_windows: np.ndarray, dimension: int = 1, n_bins: int = 8, sigma: float = 0.1
 ) -> np.ndarray:
     try:
         from gtda.time_series import TakensEmbedding
@@ -219,22 +219,29 @@ def compute_persistence_image_features_batch(
         print(f"✅ NaN値を0.0に置換しました")
     else:
         X_windows_clean = X_windows
-        print(f"✅ TDA処理前: NaN値なし")
+        # print(f"✅ TDA処理前: NaN値なし")
 
+    # 処理の進行状況を表示
+    # print(f"🔄 TDA処理開始: {X_windows_clean.shape[0]} シーケンス")
+    
     # 1. Takens埋め込み（全ウィンドウまとめて）
+    # print("  📊 Takens埋め込み中...")
     emb = TakensEmbedding(time_delay=1, dimension=dimension)
     embedded = emb.fit_transform(X_windows_clean)  # shape: (n_samples, new_len, dimension)
 
     # 2. パーシステンス図（全ウィンドウまとめて）
+    # print("  📈 パーシステンス図計算中...")
     vrp = VietorisRipsPersistence(homology_dimensions=[0, 1])
     diagrams = vrp.fit_transform(embedded)   # shape: (n_samples, n_points, 3)
 
     # 3. パーシステンス画像（全ウィンドウまとめて）
+    # print("  🖼️  パーシステンス画像生成中...")
     pim = PersistenceImage(sigma=sigma, n_bins=n_bins)
     images = pim.fit_transform(diagrams)     # shape: (n_samples, n_bins, n_bins)
 
     # 4. ベクトル化
     feats = images.reshape(images.shape[0], -1)
+    # print(f"✅ TDA処理完了: {feats.shape}")
     return feats.astype(np.float32)
 
 # ============================================================
@@ -256,11 +263,16 @@ def compute_autoencoder_reconstruction_error(X_windows: np.ndarray, model) -> np
 # M. Wavelet 周波数特徴 (DWT energies)
 # ============================================================
 
-def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level: int = 3) -> np.ndarray:
+def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level: int = 2) -> np.ndarray:
     """Block I: discrete wavelet band energies using PyWavelets."""
     import pywt
+    import warnings
     
-    # NaN値処理
+    # 警告を抑制
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        
+        # NaN値処理
     nan_count = np.isnan(X_windows).sum()
     if nan_count > 0:
         print(f"⚠️  Wavelet処理前: NaN値 {nan_count} 個を発見")
@@ -273,8 +285,21 @@ def compute_wavelet_features(X_windows: np.ndarray, wavelet: str = "db4", level:
     for w in X_windows_clean:
         ax_feats = []
         for i in range(w.shape[1]):
-            coeffs = pywt.wavedec(w[:, i], wavelet=wavelet, level=level)
-            ax_feats += [np.sum(c ** 2) for c in coeffs]
+            # シーケンスの長さに応じてレベルを調整
+            seq_length = w.shape[0]
+            max_level = max(int(np.log2(seq_length)) - 1, 0)
+            adjusted_level = min(level, max_level)
+            
+            if adjusted_level > 0:
+                coeffs = pywt.wavedec(w[:, i], wavelet=wavelet, level=adjusted_level)
+                ax_feats += [np.sum(c ** 2) for c in coeffs]
+                # 不足分をゼロでパディング
+                if adjusted_level < level:
+                    missing_coeffs = level - adjusted_level
+                    ax_feats += [0.0] * missing_coeffs
+            else:
+                # レベルが取れない場合はすべてゼロ
+                ax_feats += [0.0] * (level + 1)
         feats.append(ax_feats)
     return np.array(feats, dtype=np.float32)
 
