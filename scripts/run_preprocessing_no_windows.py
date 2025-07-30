@@ -598,19 +598,18 @@ class NoWindowPreprocessor(Preprocessor):
         else:
             y_encoded = labels
         
+        features = np.hstack([X_demo_normalized, tab_normalized])
         logger.info(
-            "Output shapes: sequences=%d, demographics=%s, tabular=%s, tof_chunks=%d",
+            "Output shapes: sequences=%d, features=%s, tof_chunks=%d",
             len(X_sensor_normalized),
-            X_demo_normalized.shape,
-            tab_normalized.shape,
+            features.shape,
             len(normalized_chunk_files),
         )
-        
+
         return {
-            "sequences": X_sensor_normalized,  # シーケンス単位のセンサーデータ
-            "demographics": X_demo_normalized,
-            "tabular": tab_normalized,
-            "tof_voxels": tof_chunk_info,  # チャンクファイル情報
+            "sequences": X_sensor_normalized,
+            "features": features,
+            "tof_voxels": tof_chunk_info,
             "labels": y_encoded,
             "info": sequence_info,
         }
@@ -619,10 +618,8 @@ class NoWindowPreprocessor(Preprocessor):
 def generate_feature_names_no_windows(config: dict) -> dict[str, list[str]]:
     """Generate feature names for sequence-level processing."""
     feature_names = {}
-    
-    # Demographics feature names
+
     demographics_cols = config.get("demographics_cols", [])
-    feature_names["demographics"] = demographics_cols
     
     # Sensor feature names
     sensor_cols = (
@@ -655,8 +652,8 @@ def generate_feature_names_no_windows(config: dict) -> dict[str, list[str]]:
         for col in sensor_cols:
             tabular_features.append(f"{col}_fft_{low}_{high}Hz")
     
-    feature_names["tabular"] = tabular_features
-    
+    feature_names["features"] = demographics_cols + tabular_features
+
     # ToF feature names (simplified)
     tof_features = []
     pp_config = config.get("preprocessing", {})
@@ -709,7 +706,11 @@ def save_dict_no_windows(data: dict, prefix: str, out_dir: Path, config: dict) -
     logger.info(f"Saving {len(data)} data files...")
     
     # Save data files
-    for i, (key, value) in enumerate(data.items()):
+    order = ["sequences", "features", "tof_voxels", "labels", "info"]
+    for i, key in enumerate(order):
+        value = data.get(key)
+        if value is None:
+            continue
         if key == "tof_voxels" and isinstance(value, dict):
             # ToFチャンクファイルの特別処理
             logger.info(f"Saving {key} (chunk files)...")
@@ -750,7 +751,7 @@ def save_dict_no_windows(data: dict, prefix: str, out_dir: Path, config: dict) -
         else:
             # 通常のデータファイル保存
             file = out_dir / f"{prefix}_{key}.pkl"
-            logger.info(f"Saving {key} ({i+1}/{len(data)})...")
+            logger.info(f"Saving {key} ({i+1}/{len(order)})...")
             with open(file, "wb") as f:
                 pickle.dump(value, f)
             logger.info("Saved %s", file)

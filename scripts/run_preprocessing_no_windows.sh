@@ -14,7 +14,7 @@ echo "実験名: $EXPERIMENT_NAME"
 # 前処理実行
 python scripts/run_preprocessing_no_windows.py \
     --experiment-name $EXPERIMENT_NAME \
-    --config config/config_v50.yaml \
+    --config config/config_v51.yaml \
     --mode train
 
 echo "=== 前処理完了 ==="
