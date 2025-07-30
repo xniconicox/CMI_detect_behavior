@@ -439,8 +439,7 @@ class TabularFeatureBuilder:
                 else:
                     flags.append(arr.mean(axis=0))
             flag_array = np.vstack(flags)
-            if flag_array.any():
-                feats.append(flag_array)
+            feats.append(flag_array)
 
         # 最終的なNaN値チェック
         features = np.hstack(feats + [X_demo])
@@ -823,6 +822,7 @@ class Preprocessor:
         use_cache: bool = True,
         *,
         autoencoder_model=None,
+        use_windows: bool | None = None,
     ) -> "Preprocessor":
         """Fit scalers using the provided dataframe.
 
@@ -841,6 +841,9 @@ class Preprocessor:
         Preprocessor
             The fitted instance.
         """
+        if use_windows is not None:
+            self.use_windows = use_windows
+
         logger.info("Fitting Preprocessor")
         df_proc = self._maybe_clean(df)
         if self.use_handedness_augmentation:
@@ -938,7 +941,7 @@ class Preprocessor:
         use_cache: bool = True,
         *,
         autoencoder_model=None,
-        use_windows: bool = True,
+        use_windows: bool | None = None,
     ) -> dict:
         """Transform dataframe using fitted scalers.
 
@@ -961,6 +964,10 @@ class Preprocessor:
             the keys ``sequences`` and ``sequence_mask`` are returned instead of
             ``windows``.
         """
+        if use_windows is not None:
+            self.use_windows = use_windows
+        use_windows = self.use_windows
+
         if not self._fitted:
             raise RuntimeError("Preprocessor is not fitted")
         logger.info("Transforming dataframe of shape %s", df.shape)
@@ -1062,12 +1069,10 @@ class Preprocessor:
         else:
             y_encoded = y
 
-        return {
-            "windows": X_sensor_normalized,
+        result = {
             "demographics": X_demo_normalized,
             "labels": y_encoded,
             "info": info,
-            "mask": seq_mask,
         }
         if use_windows:
             result.update(
@@ -1095,7 +1100,12 @@ class Preprocessor:
         autoencoder_model=None,
         use_windows: bool = True,
     ) -> dict:
-        self.fit(df, use_cache=use_cache, autoencoder_model=autoencoder_model)
+        self.fit(
+            df,
+            use_cache=use_cache,
+            autoencoder_model=autoencoder_model,
+            use_windows=use_windows,
+        )
         return self.transform(
             df,
             use_cache=use_cache,

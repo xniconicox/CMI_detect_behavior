@@ -77,6 +77,40 @@ class MultimodalTrainerV50:
         y = keras.layers.SpatialDropout3D(0.2)(y)
         return y
 
+    # --- Methods required by tests -------------------------------------------------
+    def build_model(
+        self,
+        *,
+        sensor_shape: tuple,
+        demo_shape: int,
+        num_classes: int,
+    ) -> keras.Model:
+        """Builds a simple model used in unit tests."""
+
+        sensor_in = keras.layers.Input(shape=sensor_shape, name="sensor")
+        mask_in = keras.layers.Input(shape=(sensor_shape[0],), name="mask")
+        demo_in = keras.layers.Input(shape=(demo_shape,), name="demo")
+
+        x = keras.layers.LSTM(8)(sensor_in, mask=mask_in)
+        d = keras.layers.Dense(8)(demo_in)
+        h = keras.layers.concatenate([x, d])
+        out = keras.layers.Dense(num_classes)(h)
+
+        model = keras.Model(inputs=[sensor_in, mask_in, demo_in], outputs=out)
+        model.compile(optimizer="adam", loss="mse")
+        return model
+
+    def forward(
+        self,
+        model: keras.Model,
+        X: np.ndarray,
+        mask: np.ndarray,
+        demo: np.ndarray,
+    ) -> np.ndarray:
+        """Simple forward pass used in tests."""
+
+        return model.predict([X, mask, demo])
+
     def load_all_data(self) -> Dict[str, np.ndarray]:
         """各モダリティの前処理済みデータをすべて読み込む
 
