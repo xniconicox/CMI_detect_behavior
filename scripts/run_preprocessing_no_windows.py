@@ -225,8 +225,11 @@ class NoWindowPreprocessor(Preprocessor):
         # 特徴量を配列に変換
         tabular_features = np.array(tabular_features)
         
-        # 表形式特徴量の正規化パラメータを学習
-        tab_clean = np.nan_to_num(tabular_features, nan=0.0)
+        # 人口統計と表形式を結合
+        demo_clean = np.nan_to_num(np.array(demographics), nan=0.0)
+        features_all = np.hstack([demo_clean, tabular_features])
+        # スケーラー学習
+        tab_clean = np.nan_to_num(features_all, nan=0.0)
         
         # クリップ処理の閾値を設定
         self.tab_clip_low = np.percentile(tab_clean, 0.5)
@@ -404,14 +407,17 @@ class NoWindowPreprocessor(Preprocessor):
         # 特徴量を配列に変換
         tabular_features = np.array(tabular_features)
         
-        # 表形式特徴量の正規化
-        tab_clean = np.nan_to_num(tabular_features, nan=0.0)
+        # 人口統計と表形式を結合
+        demo_clean = np.nan_to_num(np.array(demographics), nan=0.0)
+        features_all = np.hstack([demo_clean, tabular_features])
+        # 正規化
+        tab_clean = np.nan_to_num(features_all, nan=0.0)
         
         # クリップ処理（fit時と同じ閾値）
         if hasattr(self, "tab_clip_low") and hasattr(self, "tab_clip_high"):
             tab_clean = np.clip(tab_clean, self.tab_clip_low, self.tab_clip_high)
         
-        tab_normalized = self.tab_scaler.transform(tab_clean)
+        features_normalized = self.tab_scaler.transform(tab_clean)
         
         # ToF特徴量（シーケンス単位）- 3Dボクセル形式で生成（メモリ効率化版）
         logger.info("Processing ToF features (3D voxel format) - memory efficient...")
@@ -569,18 +575,16 @@ class NoWindowPreprocessor(Preprocessor):
             y_encoded = labels
         
         logger.info(
-            "Output shapes: sequences=%d, demographics=%s, tabular=%s, tof=%s",
+            "Output shapes: sequences=%d, features=%s, tof=%s",
             len(X_sensor_normalized),
-            X_demo_normalized.shape,
-            tab_normalized.shape,
+            features_normalized.shape,
             tof_normalized.shape,
         )
         
         return {
-            "sequences": X_sensor_normalized,  # シーケンス単位のセンサーデータ
-            "demographics": X_demo_normalized,
-            "tabular": tab_normalized,
-            "tof_voxels": tof_normalized,  # 3Dボクセル形式
+            "sequences": X_sensor_normalized,
+            "features": features_normalized,
+            "tof_voxels": tof_normalized,
             "labels": y_encoded,
             "info": sequence_info,
         }
@@ -589,10 +593,7 @@ class NoWindowPreprocessor(Preprocessor):
 def generate_feature_names_no_windows(config: dict) -> dict[str, list[str]]:
     """Generate feature names for sequence-level processing."""
     feature_names = {}
-    
-    # Demographics feature names
     demographics_cols = config.get("demographics_cols", [])
-    feature_names["demographics"] = demographics_cols
     
     # Sensor feature names
     sensor_cols = (
@@ -625,7 +626,7 @@ def generate_feature_names_no_windows(config: dict) -> dict[str, list[str]]:
         for col in sensor_cols:
             tabular_features.append(f"{col}_fft_{low}_{high}Hz")
     
-    feature_names["tabular"] = tabular_features
+    feature_names["features"] = demographics_cols + tabular_features
     
     # ToF feature names (simplified)
     tof_features = []

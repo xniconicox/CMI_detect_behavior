@@ -32,7 +32,7 @@ import tensorflow as tf
 from tensorflow import keras
 
 
-class MultimodalTrainerV50:
+class MultimodalTrainerV51:
     """Minimal trainer that builds a model with mask input."""
 
 
@@ -40,8 +40,8 @@ class MultimodalTrainerV50:
         self.experiment_name = experiment_name
         self.base_dir = Path("output/experiments") / experiment_name
         self.data_dir = self.base_dir / "preprocessed"
-        self.model_dir = self.base_dir / "models"
-        self.result_dir = self.base_dir / "results"
+        self.model_dir = self.base_dir / "models_v51"
+        self.result_dir = self.base_dir / "results_v51"
 
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.result_dir.mkdir(parents=True, exist_ok=True)
@@ -98,14 +98,26 @@ class MultimodalTrainerV50:
                     return pickle.load(f)
             raise FileNotFoundError(f"{name} ファイルが見つかりません")
 
-        X_sensor = _load("train_windows")
-        sensor_mask = self._create_mask(X_sensor)
-        X_demo = _load("train_demographics")
-        X_tab = _load("train_tabular")
-        X_tab = X_tab.astype(np.float32)
-        X_tof = _load("train_tof_windows")
-        y = _load("train_labels")
+        X_sensor = _load("train_sequences")
         info = _load("train_info")
+
+        if isinstance(X_sensor, list):
+            max_len = max(len(seq) for seq in X_sensor)
+            feat_dim = X_sensor[0].shape[1]
+            padded = np.zeros((len(X_sensor), max_len, feat_dim), dtype=np.float32)
+            mask = np.zeros((len(X_sensor), max_len), dtype=np.float32)
+            for i, seq in enumerate(X_sensor):
+                l = len(seq)
+                padded[i, :l] = seq
+                mask[i, :l] = 1.0
+            X_sensor = padded
+            sensor_mask = mask
+        else:
+            sensor_mask = self._create_mask(X_sensor)
+
+        X_features = _load("train_features").astype(np.float32)
+        X_tof = _load("train_tof_voxels")
+        y = _load("train_labels")
 
         if isinstance(info, list) and len(info) > 0 and isinstance(info[0], dict):
             groups = np.array([
@@ -115,16 +127,14 @@ class MultimodalTrainerV50:
             groups = np.asarray(info)
 
         print(f"センサー: {X_sensor.shape}")
-        print(f"人口統計: {X_demo.shape}")
-        print(f"表形式: {X_tab.shape}")
+        print(f"統合特徴量: {X_features.shape}")
         print(f"ToF: {X_tof.shape}")
         print(f"ラベル: {y.shape}")
         print(f"グループ数: {len(groups)}")
 
         return {
             "sensor": X_sensor,
-            "demographics": X_demo,
-            "tabular": X_tab,
+            "features": X_features,
             "tof": X_tof,
             "labels": y,
             "groups": groups,
@@ -134,8 +144,7 @@ class MultimodalTrainerV50:
     def build_multimodal_model(
         self,
         sensor_shape: tuple,
-        demo_shape: int,
-        tab_shape: int,
+        feat_shape: int,
         tof_shape: tuple,
         num_classes: int,
         *,
@@ -148,17 +157,13 @@ class MultimodalTrainerV50:
         x1 = keras.layers.Masking()(sensor_input)
         x1 = keras.layers.Bidirectional(keras.layers.LSTM(32))(x1, mask=sensor_mask_input)
 
-        # 2. Demographics Tower
-        demo_input = keras.Input(shape=(demo_shape,), name="demo")
-        x2 = keras.layers.Dense(32, activation="relu")(demo_input)
+        # 2. Feature Tower (Residual Connection)
+        feat_input = keras.Input(shape=(feat_shape,), name="features")
+        x2_base = keras.layers.Dense(128, activation="relu")(feat_input)
+        x2 = keras.layers.Dense(128, activation="relu")(x2_base)
+        x2 = keras.layers.Add()([x2_base, x2])
 
-        # 3. Tabular Tower (Residual Connection)
-        tab_input = keras.Input(shape=(tab_shape,), name="tabular")
-        x3_base = keras.layers.Dense(64, activation="relu")(tab_input)
-        x3_res = keras.layers.Dense(64, activation="relu")(x3_base)
-        x3 = keras.layers.Add()([x3_base, x3_res])
-
-        # 4. ToF Tower (3D ResNet)
+        # 3. ToF Tower (3D ResNet)
         tof_input = keras.Input(shape=tof_shape, name="tof")
         x4 = self._resnet_block_3d(tof_input, filters=16, stride=2)
         x4 = self._resnet_block_3d(x4, filters=32, stride=2)
@@ -172,15 +177,15 @@ class MultimodalTrainerV50:
             v = keras.layers.Reshape((1, 64))(keras.layers.Dense(64)(x4))
             attn = keras.layers.MultiHeadAttention(num_heads=4, key_dim=64)(q, v)
             attn = keras.layers.Flatten()(attn)
-            merged = keras.layers.concatenate([attn, x2, x3])
+            merged = keras.layers.concatenate([attn, x2])
         else:
-            merged = keras.layers.concatenate([x1, x2, x3, x4])
+            merged = keras.layers.concatenate([x1, x2, x4])
         merged = keras.layers.Dense(64, activation="relu")(merged)
         merged = keras.layers.Dropout(0.3)(merged)
         output = keras.layers.Dense(num_classes, activation="softmax")(merged)
 
         model = keras.Model(
-            inputs=[sensor_input, sensor_mask_input, demo_input, tab_input, tof_input],
+            inputs=[sensor_input, sensor_mask_input, feat_input, tof_input],
             outputs=output,
         )
 
@@ -203,8 +208,7 @@ class MultimodalTrainerV50:
     def _train_fold(
         self,
         X_s: np.ndarray,
-        X_d: np.ndarray,
-        X_t: np.ndarray,
+        X_feat: np.ndarray,
         X_f: np.ndarray,
         m_s: np.ndarray,
         y: np.ndarray,
@@ -218,8 +222,7 @@ class MultimodalTrainerV50:
         """単一foldでモデルを学習しF1スコアを返す"""
         model = self.build_multimodal_model(
             sensor_shape=(None, X_s.shape[2]),
-            demo_shape=X_d.shape[1],
-            tab_shape=X_t.shape[1],
+            feat_shape=X_feat.shape[1],
             tof_shape=X_f.shape[1:],
             num_classes=len(np.unique(y)),
             use_attention=use_attention,
@@ -228,10 +231,10 @@ class MultimodalTrainerV50:
         weights = compute_class_weight(class_weight="balanced", classes=classes, y=y[train_idx])
         class_weight = {cls: w for cls, w in zip(classes, weights)}
         history = model.fit(
-            [X_s[train_idx], m_s[train_idx], X_d[train_idx], X_t[train_idx], X_f[train_idx]],
+            [X_s[train_idx], m_s[train_idx], X_feat[train_idx], X_f[train_idx]],
             y[train_idx],
             validation_data=(
-                [X_s[val_idx], m_s[val_idx], X_d[val_idx], X_t[val_idx], X_f[val_idx]],
+                [X_s[val_idx], m_s[val_idx], X_feat[val_idx], X_f[val_idx]],
                 y[val_idx],
             ),
             epochs=epochs,
@@ -240,7 +243,7 @@ class MultimodalTrainerV50:
             callbacks=[keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True)],
             verbose=1,
         )
-        preds = model.predict([X_s[val_idx], m_s[val_idx], X_d[val_idx], X_t[val_idx], X_f[val_idx]])
+        preds = model.predict([X_s[val_idx], m_s[val_idx], X_feat[val_idx], X_f[val_idx]])
         pred_labels = preds.argmax(axis=1)
         f1 = f1_score(y[val_idx], pred_labels, average="macro")
         
@@ -259,8 +262,7 @@ class MultimodalTrainerV50:
     ) -> keras.callbacks.History:
         print("=== データ型確認 ===")
         print(f"X_sensor dtype: {data['sensor'].dtype}")
-        print(f"X_demo dtype: {data['demographics'].dtype}")
-        print(f"X_tabular dtype: {data['tabular'].dtype}")
+        print(f"X_features dtype: {data['features'].dtype}")
         print(f"X_tof dtype: {data['tof'].dtype}")
         print(f"y dtype: {data['labels'].dtype}")
         print(f"y unique values: {np.unique(data['labels'])}")        
@@ -269,8 +271,7 @@ class MultimodalTrainerV50:
         m_s = data.get("sensor_mask")
         if m_s is None:
             m_s = self._create_mask(X_s)
-        X_d = data["demographics"]
-        X_t = data["tabular"]
+        X_feat = data["features"]
         X_f = data["tof"]
         y = data["labels"]
 
@@ -279,8 +280,7 @@ class MultimodalTrainerV50:
         )
         model, history, _, _ = self._train_fold(
             X_s,
-            X_d,
-            X_t,
+            X_feat,
             X_f,
             m_s,
             y,
@@ -307,8 +307,7 @@ class MultimodalTrainerV50:
         """StratifiedGroupKFold を用いたクロスバリデーション学習"""
         print("=== データ型確認 ===")
         print(f"X_sensor dtype: {data['sensor'].dtype}")
-        print(f"X_demo dtype: {data['demographics'].dtype}")
-        print(f"X_tabular dtype: {data['tabular'].dtype}")
+        print(f"X_features dtype: {data['features'].dtype}")
         print(f"X_tof dtype: {data['tof'].dtype}")
         print(f"y dtype: {data['labels'].dtype}")
         print(f"y unique values: {np.unique(data['labels'])}")
@@ -317,8 +316,7 @@ class MultimodalTrainerV50:
         m_s = data.get("sensor_mask")
         if m_s is None:
             m_s = self._create_mask(X_s)
-        X_d = data["demographics"]
-        X_t = data["tabular"]
+        X_feat = data["features"]
         X_f = data["tof"]
         y = data["labels"]
 
@@ -334,8 +332,7 @@ class MultimodalTrainerV50:
             print(f"Fold {fold}/{n_splits}")
             model, history, f1, cmi_score = self._train_fold(
                 X_s,
-                X_d,
-                X_t,
+                X_feat,
                 X_f,
                 m_s,
                 y,
@@ -350,7 +347,7 @@ class MultimodalTrainerV50:
             fold_histories.append(history)
             
             # モデル保存
-            model_path = self.model_dir / f"multimodal_model_v50_fold{fold}.keras"
+            model_path = self.model_dir / f"multimodal_model_v51_fold{fold}.keras"
             model.save(model_path)
             print(f"モデル保存: {model_path}")
             
@@ -399,12 +396,11 @@ class MultimodalTrainerV50:
         m_s = data.get("sensor_mask")
         if m_s is None:
             m_s = self._create_mask(X_s)
-        X_d = data["demographics"]
-        X_t = data["tabular"]
+        X_feat = data["features"]
         X_f = data["tof"]
         y = data["labels"]
 
-        preds = self.model.predict([X_s, m_s, X_d, X_t, X_f])
+        preds = self.model.predict([X_s, m_s, X_feat, X_f])
         pred_labels = preds.argmax(axis=1)
 
         label_encoder = None
@@ -514,7 +510,7 @@ class MultimodalTrainerV50:
 
         # プロット設定
         fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('Training Curves (Multimodal Model V50)', fontsize=16)
+        fig.suptitle('Training Curves (Multimodal Model V51)', fontsize=16)
 
         metrics = ['loss', 'accuracy']
         for i, metric in enumerate(metrics):
@@ -632,7 +628,7 @@ class MultimodalTrainerV50:
 
 
 if __name__ == "__main__":
-    trainer = MultimodalTrainerV50()
+    trainer = MultimodalTrainerV51()
     try:
         data = trainer.load_all_data()
         trainer.train(data, epochs=5)

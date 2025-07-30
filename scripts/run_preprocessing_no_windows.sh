@@ -14,10 +14,10 @@ echo "実験名: $EXPERIMENT_NAME"
 # 前処理実行
 python scripts/run_preprocessing_no_windows.py \
     --experiment-name $EXPERIMENT_NAME \
-    --config config/config_v50.yaml \
+    --config config/config_v51.yaml \
     --mode train
 
-echo "=== 前処理完了 ==="
+echo "=== 前処理完了 (v51) ==="
 echo "出力ディレクトリ: output/experiments/$EXPERIMENT_NAME/preprocessed/"
 
 # 生成されたファイルの確認
@@ -30,7 +30,7 @@ if [ -f "output/experiments/$EXPERIMENT_NAME/preprocessed/train_metadata.json" ]
     cat output/experiments/$EXPERIMENT_NAME/preprocessed/train_metadata.json | jq '.shapes'
     echo ""
     echo "特徴量数:"
-    cat output/experiments/$EXPERIMENT_NAME/preprocessed/train_metadata.json | jq '.feature_names.tabular | length'
+    cat output/experiments/$EXPERIMENT_NAME/preprocessed/train_metadata.json | jq '.feature_names.features | length'
 else
     echo "メタデータファイルが見つかりません"
 fi
