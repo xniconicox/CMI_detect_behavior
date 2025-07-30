@@ -14,11 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from numpy.lib.format import open_memmap
-
 import numpy as np
 import pandas as pd
 import yaml
-
 from src.utils.pipeline import Preprocessor
 from src.utils.feature_engineering import (
     compute_basic_statistics,
@@ -344,7 +342,6 @@ def main() -> None:
         np.save(out_dir / "predict_labels.npy", y)
         with open(out_dir / "predict_info.json", "w", encoding="utf-8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)
-
 
 if __name__ == "__main__":
     main()
