@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from numpy.lib.format import open_memmap
+
 import numpy as np
 import pandas as pd
 import yaml
@@ -33,12 +35,15 @@ def build_sensor_sequences(
     df_raw: pd.DataFrame,
     df_interp: pd.DataFrame,
     sensor_cols: List[str],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[dict]]:
-    """Return normalized sequences and masks."""
+    out_dir: Path,
+    prefix: str,
+) -> tuple[np.memmap, np.memmap, np.memmap, np.ndarray, List[dict]]:
+    """Return normalized sequences and masks saved as memmap."""
     groups_raw = list(df_raw.groupby(["subject", "sequence_id"], sort=False))
     groups_interp = list(df_interp.groupby(["subject", "sequence_id"], sort=False))
     assert [k for k, _ in groups_raw] == [k for k, _ in groups_interp]
     max_len = max(len(g) for _, g in groups_interp)
+    n_seq = len(groups_interp)
 
     # statistics using valid values only
     valid_by_feature: List[List[float]] = [[] for _ in sensor_cols]
@@ -58,8 +63,13 @@ def build_sensor_sequences(
             std = np.std(v)
             stds[j] = std if std > 0 else 1.0
 
-    sequences, t_masks, v_masks, labels, info = [], [], [], [], []
-    for (key_raw, g_raw), (_, g_interp) in zip(groups_raw, groups_interp):
+    seq_map = open_memmap(out_dir / f"{prefix}_sequences.npy", mode="w+", dtype=np.float32, shape=(n_seq, max_len, len(sensor_cols)))
+    t_map = open_memmap(out_dir / f"{prefix}_t_mask.npy", mode="w+", dtype=np.float32, shape=(n_seq, max_len))
+    v_map = open_memmap(out_dir / f"{prefix}_v_mask.npy", mode="w+", dtype=np.float32, shape=(n_seq, max_len, len(sensor_cols)))
+
+    labels = np.zeros(n_seq, dtype=np.int64)
+    info: List[dict] = []
+    for idx, ((key_raw, g_raw), (_, g_interp)) in enumerate(zip(groups_raw, groups_interp)):
         subject, seq_id = key_raw
         arr_raw = g_raw[sensor_cols].to_numpy(np.float32)
         arr_interp = g_interp[sensor_cols].to_numpy(np.float32)
@@ -81,48 +91,65 @@ def build_sensor_sequences(
         t_mask = np.zeros(max_len, dtype=np.float32)
         t_mask[: len(arr_interp)] = 1.0
 
-        sequences.append(norm)
-        t_masks.append(t_mask)
-        v_masks.append(v_mask.astype(np.float32))
-        labels.append(label)
+        seq_map[idx] = norm
+        t_map[idx] = t_mask
+        v_map[idx] = v_mask.astype(np.float32)
+        labels[idx] = label
         info.append({"subject": subject, "sequence_id": seq_id, "length": len(arr_interp)})
 
+    seq_map.flush()
+    t_map.flush()
+    v_map.flush()
+
     return (
-        np.stack(sequences),
-        np.stack(t_masks),
-        np.stack(v_masks),
-        np.asarray(labels, dtype=np.int64),
+        seq_map,
+        t_map,
+        v_map,
+        labels,
         info,
     )
 
 
 def build_tof_sequences(
-    df: pd.DataFrame, depth: int, height: int, width: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return normalized ToF voxel tensor and mask."""
+    df: pd.DataFrame,
+    depth: int,
+    height: int,
+    width: int,
+    out_dir: Path,
+    prefix: str,
+) -> tuple[np.memmap, np.memmap]:
+    """Return normalized ToF voxel tensor and mask saved as memmap."""
     tof_cols = [f"tof_{d}_v{i}" for d in range(1, depth + 1) for i in range(height * width)]
     groups = list(df.groupby(["subject", "sequence_id"], sort=False))
     max_len = max(len(g) for _, g in groups)
+    n_seq = len(groups)
 
-    valid_vals = []
+    # compute mean/std using valid values only (streaming)
+    total = 0.0
+    total_sq = 0.0
+    count = 0
     for _, g in groups:
         arr = np.stack(
             [g[f"tof_{d}_v{i}"].to_numpy(np.float32) for d in range(1, depth + 1) for i in range(height * width)],
             axis=1,
         ).reshape(len(g), depth, height, width)
-        refl = (arr >= 0) & (arr <= 254)
-        valid_vals.append(arr[refl])
-    if valid_vals:
-        all_valid = np.concatenate(valid_vals)
-        mean = float(np.mean(all_valid))
-        std = float(np.std(all_valid))
+        mask = (arr >= 0) & (arr <= 254)
+        vals = arr[mask]
+        total += float(vals.sum())
+        total_sq += float((vals ** 2).sum())
+        count += vals.size
+    if count > 0:
+        mean = total / count
+        std = (total_sq / count - mean ** 2) ** 0.5
     else:
         mean, std = 0.0, 1.0
     if std == 0:
         std = 1.0
 
-    sequences, masks = [], []
-    for (_, g) in groups:
+    tof_map = open_memmap(out_dir / f"{prefix}_tof.npy", mode="w+", dtype=np.float32, shape=(n_seq, max_len, depth, height, width))
+    mask_map = open_memmap(out_dir / f"{prefix}_tof_mask.npy", mode="w+", dtype=np.float32, shape=(n_seq, max_len, depth, height, width))
+
+    for idx, (_, g) in enumerate(groups):
         arr = np.stack(
             [g[f"tof_{d}_v{i}"].to_numpy(np.float32) for d in range(1, depth + 1) for i in range(height * width)],
             axis=1,
@@ -144,10 +171,14 @@ def build_tof_sequences(
             pad_mask = np.zeros((pad_len, depth, height, width), dtype=np.float32)
             norm = np.vstack([norm, pad_val])
             mask = np.vstack([mask, pad_mask])
-        sequences.append(norm)
-        masks.append(mask)
 
-    return np.stack(sequences), np.stack(masks)
+        tof_map[idx] = norm
+        mask_map[idx] = mask
+
+    tof_map.flush()
+    mask_map.flush()
+
+    return tof_map, mask_map
 
 
 # -------------------------------------------------------------
@@ -186,14 +217,13 @@ def main() -> None:
         height = config.get("preprocessing", {}).get("tof_height", 8)
         width = config.get("preprocessing", {}).get("tof_width", 8)
 
-        X_seq, T_mask, V_mask, y, info = build_sensor_sequences(df_raw, df_interp, sensor_cols)
-        X_tof, tof_mask = build_tof_sequences(df_interp, depth, height, width)
+        X_seq, T_mask, V_mask, y, info = build_sensor_sequences(
+            df_raw, df_interp, sensor_cols, out_dir, "train"
+        )
+        X_tof, tof_mask = build_tof_sequences(
+            df_interp, depth, height, width, out_dir, "train"
+        )
 
-        np.save(out_dir / "train_sequences.npy", X_seq)
-        np.save(out_dir / "train_t_mask.npy", T_mask)
-        np.save(out_dir / "train_v_mask.npy", V_mask)
-        np.save(out_dir / "train_tof.npy", X_tof)
-        np.save(out_dir / "train_tof_mask.npy", tof_mask)
         np.save(out_dir / "train_labels.npy", y)
         with open(out_dir / "train_info.json", "w", encoding="utf-8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)
@@ -213,14 +243,13 @@ def main() -> None:
         height = config.get("preprocessing", {}).get("tof_height", 8)
         width = config.get("preprocessing", {}).get("tof_width", 8)
 
-        X_seq, T_mask, V_mask, y, info = build_sensor_sequences(df_raw, df_interp, sensor_cols)
-        X_tof, tof_mask = build_tof_sequences(df_interp, depth, height, width)
+        X_seq, T_mask, V_mask, y, info = build_sensor_sequences(
+            df_raw, df_interp, sensor_cols, out_dir, "predict"
+        )
+        X_tof, tof_mask = build_tof_sequences(
+            df_interp, depth, height, width, out_dir, "predict"
+        )
 
-        np.save(out_dir / "predict_sequences.npy", X_seq)
-        np.save(out_dir / "predict_t_mask.npy", T_mask)
-        np.save(out_dir / "predict_v_mask.npy", V_mask)
-        np.save(out_dir / "predict_tof.npy", X_tof)
-        np.save(out_dir / "predict_tof_mask.npy", tof_mask)
         np.save(out_dir / "predict_labels.npy", y)
         with open(out_dir / "predict_info.json", "w", encoding="utf-8") as f:
             json.dump(info, f, ensure_ascii=False, indent=2)

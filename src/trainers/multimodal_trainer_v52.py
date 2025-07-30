@@ -25,7 +25,7 @@ class MultimodalTrainerV52:
     def load_all_data(self) -> Dict[str, np.ndarray]:
         def _load(name: str) -> np.ndarray:
             path = self.data_dir / name
-            return np.load(path)
+            return np.load(path, mmap_mode="r")
 
         X_seq = _load("train_sequences.npy")
         T_mask = _load("train_t_mask.npy")
