@@ -435,8 +435,13 @@ class NoWindowPreprocessor(Preprocessor):
         logger.info(f"最大シーケンス長: {max_seq_length}")
         
         # メモリ効率化：チャンク処理とオンザフライ保存
-        chunk_size = 1000  # 1000シーケンスごとに処理
-        tof_chunks = []
+        chunk_size = 500  # 500シーケンスごとに処理（1000から削減）
+        tof_chunk_files = []  # ファイルパスを保存
+        
+        # 一時ディレクトリを作成
+        import tempfile
+        temp_dir = tempfile.mkdtemp(prefix="tof_chunks_")
+        logger.info(f"Using temporary directory: {temp_dir}")
         
         for chunk_start in range(0, len(sequence_info), chunk_size):
             chunk_end = min(chunk_start + chunk_size, len(sequence_info))
@@ -492,69 +497,94 @@ class NoWindowPreprocessor(Preprocessor):
                                     padding_value, dtype=np.float16)
                     chunk_tof_features.append(tof_3d)
             
-            # チャンクを配列化して保存
+            # チャンクを配列化して即座にファイル保存
             chunk_array = np.array(chunk_tof_features, dtype=np.float16)
-            tof_chunks.append(chunk_array)
+            chunk_file = os.path.join(temp_dir, f"tof_chunk_{chunk_start//chunk_size:03d}.npy")
+            np.save(chunk_file, chunk_array)
+            tof_chunk_files.append(chunk_file)
             
             # メモリ解放
             del chunk_tof_features
             del chunk_array
+            logger.info(f"Saved chunk to {chunk_file}")
         
-        # チャンクを結合（メモリ効率的）
-        logger.info("Combining ToF chunks...")
-        tof_features = np.concatenate(tof_chunks, axis=0)
-        del tof_chunks  # メモリ解放
+        # チャンク結合は避け、ファイルパスのリストを保存
+        logger.info(f"Saved {len(tof_chunk_files)} ToF chunk files")
         
-        logger.info(f"ToF features shape: {tof_features.shape}")
+        # 正規化用の統計量を計算（サンプリング）
+        logger.info("Computing ToF normalization statistics from samples...")
         
-        # ToF特徴量の正規化（3D形状、-1パディング対応、メモリ効率化）
-        logger.info("Normalizing ToF features...")
-        tof_clean = np.nan_to_num(tof_features, nan=padding_value)
-        
-        if hasattr(self, "tof_scaler"):
-            # パディング値以外のデータのみで正規化（チャンク処理）
-            valid_mask = tof_clean != padding_value
-            valid_data = tof_clean[valid_mask]
+        # メモリ効率化：最初のチャンクのみを使用して統計量を計算
+        if tof_chunk_files:
+            first_chunk_file = tof_chunk_files[0]
+            logger.info(f"Using first chunk for normalization: {first_chunk_file}")
+            
+            chunk_data = np.load(first_chunk_file)
+            valid_mask = chunk_data != padding_value
+            valid_data = chunk_data[valid_mask]
             
             if len(valid_data) > 0:
-                # 有効データのみでスケーラーを更新
-                self.tof_scaler.partial_fit(valid_data.reshape(-1, 1))
+                # 有効データの統計量を計算
+                mean_val = np.mean(valid_data)
+                std_val = np.std(valid_data)
+                logger.info(f"Sample statistics - mean: {mean_val:.4f}, std: {std_val:.4f}")
+            else:
+                # デフォルト値
+                mean_val = 0.0
+                std_val = 1.0
+                logger.warning("No valid data in first chunk, using default values")
             
-            # 全データを正規化（パディング値はそのまま）
-            original_shape = tof_clean.shape
-            tof_flat = tof_clean.reshape(original_shape[0], -1)
-            tof_normalized_flat = self.tof_scaler.transform(tof_flat.reshape(-1, 1)).reshape(tof_flat.shape)
-            tof_normalized = tof_normalized_flat.reshape(original_shape)
-            
-            # パディング値を元に戻す
-            tof_normalized[tof_clean == padding_value] = padding_value
+            # メモリ解放
+            del chunk_data
+            del valid_data
         else:
-            # 初回実行時はスケーラーを作成
-            from sklearn.preprocessing import StandardScaler
-            self.tof_scaler = StandardScaler()
+            # フォールバック
+            mean_val = 0.0
+            std_val = 1.0
+            logger.warning("No chunk files available, using default normalization")
+        
+        # スケーラーを作成・学習
+        from sklearn.preprocessing import StandardScaler
+        self.tof_scaler = StandardScaler()
+        self.tof_scaler.mean_ = np.array([mean_val])
+        self.tof_scaler.scale_ = np.array([std_val if std_val > 0 else 1.0])
+        
+        # 各チャンクを正規化して保存
+        logger.info("Normalizing ToF chunks...")
+        normalized_chunk_files = []
+        
+        for i, chunk_file in enumerate(tof_chunk_files):
+            logger.info(f"Normalizing chunk {i+1}/{len(tof_chunk_files)}")
+            chunk_data = np.load(chunk_file)
             
-            # パディング値以外のデータのみで学習
-            valid_mask = tof_clean != padding_value
-            valid_data = tof_clean[valid_mask]
-            
-            if len(valid_data) > 0:
-                self.tof_scaler.fit(valid_data.reshape(-1, 1))
-            
-            # 全データを正規化
-            original_shape = tof_clean.shape
-            tof_flat = tof_clean.reshape(original_shape[0], -1)
-            tof_normalized_flat = self.tof_scaler.transform(tof_flat.reshape(-1, 1)).reshape(tof_flat.shape)
-            tof_normalized = tof_normalized_flat.reshape(original_shape)
+            # 正規化
+            original_shape = chunk_data.shape
+            chunk_flat = chunk_data.reshape(original_shape[0], -1)
+            chunk_normalized_flat = self.tof_scaler.transform(chunk_flat.reshape(-1, 1)).reshape(chunk_flat.shape)
+            chunk_normalized = chunk_normalized_flat.reshape(original_shape)
             
             # パディング値を元に戻す
-            tof_normalized[tof_clean == padding_value] = padding_value
+            chunk_normalized[chunk_data == padding_value] = padding_value
+            
+            # 正規化済みファイルを保存
+            normalized_file = os.path.join(temp_dir, f"tof_normalized_chunk_{i:03d}.npy")
+            np.save(normalized_file, chunk_normalized)
+            normalized_chunk_files.append(normalized_file)
+            
+            # 元ファイルを削除
+            os.remove(chunk_file)
         
-        logger.info(f"ToF normalized shape: {tof_normalized.shape}")
+        logger.info(f"ToF processing completed. {len(normalized_chunk_files)} normalized chunk files saved.")
         logger.info(f"パディング値: {padding_value}")
         
-        # メモリ解放
-        del tof_features
-        del tof_clean
+        # チャンクファイル情報を保存
+        tof_chunk_info = {
+            'chunk_files': normalized_chunk_files,
+            'temp_dir': temp_dir,
+            'shape': (len(sequence_info), max_seq_length, tof_depth, tof_height, tof_width),
+            'dtype': 'float16',
+            'padding_value': padding_value
+        }
         
         # ラベルエンコーディング
         labels = np.array(labels)
@@ -569,18 +599,18 @@ class NoWindowPreprocessor(Preprocessor):
             y_encoded = labels
         
         logger.info(
-            "Output shapes: sequences=%d, demographics=%s, tabular=%s, tof=%s",
+            "Output shapes: sequences=%d, demographics=%s, tabular=%s, tof_chunks=%d",
             len(X_sensor_normalized),
             X_demo_normalized.shape,
             tab_normalized.shape,
-            tof_normalized.shape,
+            len(normalized_chunk_files),
         )
         
         return {
             "sequences": X_sensor_normalized,  # シーケンス単位のセンサーデータ
             "demographics": X_demo_normalized,
             "tabular": tab_normalized,
-            "tof_voxels": tof_normalized,  # 3Dボクセル形式
+            "tof_voxels": tof_chunk_info,  # チャンクファイル情報
             "labels": y_encoded,
             "info": sequence_info,
         }
@@ -680,11 +710,50 @@ def save_dict_no_windows(data: dict, prefix: str, out_dir: Path, config: dict) -
     
     # Save data files
     for i, (key, value) in enumerate(data.items()):
-        file = out_dir / f"{prefix}_{key}.pkl"
-        logger.info(f"Saving {key} ({i+1}/{len(data)})...")
-        with open(file, "wb") as f:
-            pickle.dump(value, f)
-        logger.info("Saved %s", file)
+        if key == "tof_voxels" and isinstance(value, dict):
+            # ToFチャンクファイルの特別処理
+            logger.info(f"Saving {key} (chunk files)...")
+            
+            # チャンクファイルを出力ディレクトリにコピー
+            tof_dir = out_dir / f"{prefix}_tof_chunks"
+            tof_dir.mkdir(exist_ok=True)
+            
+            chunk_files = value['chunk_files']
+            temp_dir = value['temp_dir']
+            
+            for chunk_file in chunk_files:
+                # ファイル名を抽出
+                filename = os.path.basename(chunk_file)
+                dest_file = tof_dir / filename
+                
+                # ファイルをコピー
+                import shutil
+                shutil.copy2(chunk_file, dest_file)
+                logger.info(f"Copied {filename}")
+            
+            # チャンク情報を保存
+            chunk_info = {
+                'chunk_files': [str(tof_dir / os.path.basename(f)) for f in chunk_files],
+                'shape': value['shape'],
+                'dtype': value['dtype'],
+                'padding_value': value['padding_value']
+            }
+            
+            with open(out_dir / f"{prefix}_{key}.pkl", "wb") as f:
+                pickle.dump(chunk_info, f)
+            
+            # 一時ディレクトリを削除
+            import shutil
+            shutil.rmtree(temp_dir)
+            logger.info(f"Removed temporary directory: {temp_dir}")
+            
+        else:
+            # 通常のデータファイル保存
+            file = out_dir / f"{prefix}_{key}.pkl"
+            logger.info(f"Saving {key} ({i+1}/{len(data)})...")
+            with open(file, "wb") as f:
+                pickle.dump(value, f)
+            logger.info("Saved %s", file)
     
     # Save metadata
     logger.info("Creating metadata...")
